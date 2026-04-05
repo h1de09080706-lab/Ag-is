@@ -1,5 +1,3 @@
-Va sur GitHub → bot.py → clique sur le crayon ✏️ → supprime tout → colle ce nouveau code :
-
 import discord
 from discord.ext import commands
 from discord import app_commands

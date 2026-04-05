@@ -1394,4 +1394,4 @@ if __name__ == "__main__":
         logger.info("⚡ Aegis V3 démarre...")
         bot.run(token)
     else:
-        logger.error(" DISCORD_BOT_TOKEN manquant!")
+        logger.error("❌ DISCORD_BOT_TOKEN manquant!")

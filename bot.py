@@ -66,7 +66,7 @@ class AegisBot(commands.Bot):
         self.polls:            Dict = {}
         # Musique
         self.music_queues:     Dict = {}   # guild_id -> [{'title':..,'url':..}]
-        self.voice_clients:    Dict = {}   # guild_id -> voice_client
+        self.vc_pool:    Dict = {}   # guild_id -> voice_client
         self.now_playing:      Dict = {}   # guild_id -> track info
         # IA cooldown
         self.ai_cooldown:      Dict = {}
@@ -183,16 +183,16 @@ def format_duration(seconds: int) -> str:
 
 async def play_next(guild_id: str):
     queue = bot.music_queues.get(guild_id, [])
-    vc    = bot.voice_clients.get(guild_id)
+    vc    = bot.vc_pool.get(guild_id)
     if not vc or not vc.is_connected():
         return
     if not queue:
         bot.now_playing[guild_id] = None
         await asyncio.sleep(300)
-        vc2 = bot.voice_clients.get(guild_id)
+        vc2 = bot.vc_pool.get(guild_id)
         if vc2 and vc2.is_connected() and not vc2.is_playing():
             await vc2.disconnect()
-            bot.voice_clients.pop(guild_id, None)
+            bot.vc_pool.pop(guild_id, None)
         return
     track = queue.pop(0)
     bot.now_playing[guild_id] = track
@@ -749,14 +749,14 @@ async def play(interaction: discord.Interaction, recherche: str):
         return await interaction.followup.send(embed=err("Introuvable","Aucun résultat trouvé. Essaie un autre titre."))
 
     # Rejoindre le vocal
-    if gid not in bot.voice_clients or not bot.voice_clients[gid].is_connected():
+    if gid not in bot.vc_pool or not bot.vc_pool[gid].is_connected():
         try:
             vc = await interaction.user.voice.channel.connect()
-            bot.voice_clients[gid] = vc
+            bot.vc_pool[gid] = vc
         except Exception as ex:
             return await interaction.followup.send(embed=err("Erreur vocal", str(ex)[:100]))
     else:
-        vc = bot.voice_clients[gid]
+        vc = bot.vc_pool[gid]
 
     bot.music_queues.setdefault(gid, []).append(track)
 
@@ -775,7 +775,7 @@ async def play(interaction: discord.Interaction, recherche: str):
 @bot.tree.command(name="pause", description="Mettre en pause")
 async def pause(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
-    vc  = bot.voice_clients.get(gid)
+    vc  = bot.vc_pool.get(gid)
     if vc and vc.is_playing():
         vc.pause()
         await interaction.response.send_message(embed=inf(f"{T.PAUSE}  Pause", "Musique mise en pause."))
@@ -785,7 +785,7 @@ async def pause(interaction: discord.Interaction):
 @bot.tree.command(name="resume", description="Reprendre la lecture")
 async def resume(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
-    vc  = bot.voice_clients.get(gid)
+    vc  = bot.vc_pool.get(gid)
     if vc and vc.is_paused():
         vc.resume()
         await interaction.response.send_message(embed=ok(f"Reprise de la lecture"))
@@ -795,7 +795,7 @@ async def resume(interaction: discord.Interaction):
 @bot.tree.command(name="skip", description="Passer la musique actuelle")
 async def skip(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
-    vc  = bot.voice_clients.get(gid)
+    vc  = bot.vc_pool.get(gid)
     if vc and (vc.is_playing() or vc.is_paused()):
         vc.stop()
         await interaction.response.send_message(embed=ok(f"{T.SKIP}  Skippé", "Passage à la piste suivante..."))
@@ -805,12 +805,12 @@ async def skip(interaction: discord.Interaction):
 @bot.tree.command(name="stop", description="Arrêter la musique et déconnecter")
 async def stop(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
-    vc  = bot.voice_clients.get(gid)
+    vc  = bot.vc_pool.get(gid)
     if vc:
         bot.music_queues[gid] = []
         bot.now_playing[gid]  = None
         await vc.disconnect()
-        bot.voice_clients.pop(gid, None)
+        bot.vc_pool.pop(gid, None)
         await interaction.response.send_message(embed=ok(f"{T.STOP}  Arrêté","File vidée, bot déconnecté."))
     else:
         await interaction.response.send_message(embed=err("Pas dans un vocal"), ephemeral=True)

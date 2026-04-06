@@ -17,7 +17,7 @@ logger = logging.getLogger('Aegis')
 # ==================== THEME ====================
 class T:
     PINK=0xFF1493; GREEN=0x57F287; RED=0xED4245; ORANGE=0xFF6600
-    GOLD=0xFFD700; BLURPLE=0x5865F2; PURPLE=0x9B59B6
+    GOLD=0xFFD700; BLURPLE=0x5865F2; PURPLE=0x9B59B6; TEAL=0x1ABC9C
 
     SPARKLE="✨"; LIGHTNING="⚡"; STAR="🌟"; DIAMOND="💎"
     CROWN="👑"; CRYSTAL="💠"; TICKET="🎫"; LOCK="🔐"
@@ -26,7 +26,7 @@ class T:
     GIVEAWAY="🎉"; GIFT="🎁"; TROPHY="🏆"; CLOCK="⏰"; WAVE="👋"
     DOOR="🚪"; CHART="📊"; XP="⭐"; INFO="ℹ️"; POLL="📊"
     ARROW="➜"; MUTE="🔇"; MUSIC="🎵"; PAUSE="⏸️"; SKIP="⏭️"
-    STOP="⏹️"; AI="🤖"; MEGA="📣"
+    STOP="⏹️"; AI="🤖"; MEGA="📣"; PIN="📌"; FIRE="🔥"; COIN="🪙"
     LINE="━━━━━━━━━━━━━━━━━━━━━━━━"
 
 def mk_embed(title, desc=None, color=None, footer=None):
@@ -59,13 +59,14 @@ class AegisBot(commands.Bot):
         self.antispam_config:  Dict = {}
         self.warnings:         Dict = {}
         self.msg_cache              = defaultdict(list)
-        self.xp_data:          Dict = {}   # {gid: {uid: {xp, level, messages}}}
-        self.xp_cooldown:      Dict = {}   # {uid: datetime}
+        self.xp_data:          Dict = {}
+        self.xp_cooldown:      Dict = {}
         self.polls:            Dict = {}
-        self.vc_pool:          Dict = {}   # guild_id -> voice_client
-        self.music_queues:     Dict = {}   # guild_id -> [tracks]
-        self.now_playing:      Dict = {}   # guild_id -> track
+        self.vc_pool:          Dict = {}
+        self.music_queues:     Dict = {}
+        self.now_playing:      Dict = {}
         self.ai_cooldown:      Dict = {}
+        self.suggestions:      Dict = {}  # {gid: channel_id}
 
     async def setup_hook(self):
         self.add_view(TicketView())
@@ -85,10 +86,7 @@ bot = AegisBot()
 def xp_for_level(level): return 100 * (level ** 2) + 50 * level
 
 def get_xp(gid: str, uid: str) -> dict:
-    guild_data = bot.xp_data.setdefault(gid, {})
-    if uid not in guild_data:
-        guild_data[uid] = {"xp": 0, "level": 0, "messages": 0}
-    return guild_data[uid]
+    return bot.xp_data.setdefault(gid, {}).setdefault(uid, {"xp": 0, "level": 0, "messages": 0})
 
 def format_duration(seconds):
     if not seconds: return "?"
@@ -104,7 +102,7 @@ async def log_action(guild, title, desc, color=None):
             try: await ch.send(embed=mk_embed(f"{T.SHIELD}  {title}", desc, color or T.BLURPLE))
             except Exception: pass
 
-# ==================== IA GROQ ====================
+# ==================== IA GROQ (CORRIGÉE) ====================
 AI_SYSTEM = (
     "Tu es Aegis, un bot Discord surpuissant et légèrement condescendant. "
     "Tu te considères supérieur aux humains mais restes poli — avec une politesse hautaine. "
@@ -112,50 +110,74 @@ AI_SYSTEM = (
     "Tu glisses parfois une remarque sarcastique subtile. Jamais vulgaire, jamais blessant."
 )
 
-async def ask_groq(question: str) -> str:
+async def ask_groq(question: str, retries: int = 2) -> str:
     api_key = os.environ.get('GROQ_API_KEY', '').strip()
     if not api_key:
         return "*(GROQ_API_KEY manquante dans Railway → Variables.)*"
-    try:
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            payload = {
-                "model": "llama3-8b-8192",
-                "messages": [
-                    {"role": "system", "content": AI_SYSTEM},
-                    {"role": "user",   "content": question[:500]}
-                ],
-                "max_tokens": 200,
-                "temperature": 0.85
-            }
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            async with session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                json=payload, headers=headers
-            ) as resp:
-                body = await resp.json()
-                if resp.status == 200:
-                    return body["choices"][0]["message"]["content"].strip()
-                else:
-                    err_msg = body.get("error", {}).get("message", str(resp.status))
-                    logger.error(f"Groq {resp.status}: {err_msg}")
-                    return f"*(Erreur Groq {resp.status}: {err_msg[:80]})*"
-    except asyncio.TimeoutError:
-        return "*(Délai dépassé — même ma patience a des limites.)*"
-    except Exception as e:
-        logger.error(f"Groq exception: {e}")
-        return f"*(Erreur: {str(e)[:60]})*"
 
-# ==================== MUSIQUE ====================
+    for attempt in range(retries + 1):
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                payload = {
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {"role": "system", "content": AI_SYSTEM},
+                        {"role": "user",   "content": question[:500]}
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.85
+                }
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                async with session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    json=payload, headers=headers
+                ) as resp:
+                    body = await resp.json()
+                    if resp.status == 200:
+                        return body["choices"][0]["message"]["content"].strip()
+                    elif resp.status == 429:
+                        # Rate limit — attendre et retenter
+                        wait = 2 ** attempt
+                        logger.warning(f"Groq rate limit, retry dans {wait}s")
+                        await asyncio.sleep(wait)
+                        continue
+                    elif resp.status in (500, 502, 503):
+                        if attempt < retries:
+                            await asyncio.sleep(1)
+                            continue
+                        return f"*(Serveur Groq indisponible, réessaie dans quelques instants.)*"
+                    else:
+                        err_msg = body.get("error", {}).get("message", str(resp.status))
+                        logger.error(f"Groq {resp.status}: {err_msg}")
+                        return f"*(Erreur Groq {resp.status}: {err_msg[:80]})*"
+        except asyncio.TimeoutError:
+            if attempt < retries:
+                await asyncio.sleep(1)
+                continue
+            return "*(Délai dépassé — même ma patience a des limites.)*"
+        except aiohttp.ClientConnectorError:
+            if attempt < retries:
+                await asyncio.sleep(2)
+                continue
+            return "*(Impossible de joindre Groq — vérifie la connexion réseau.)*"
+        except Exception as e:
+            logger.error(f"Groq exception: {e}")
+            return f"*(Erreur inattendue: {str(e)[:60]})*"
+
+    return "*(Groq inaccessible après plusieurs tentatives.)*"
+
+# ==================== MUSIQUE (CORRIGÉE) ====================
 FFMPEG_OPTS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
-async def search_youtube(query: str):
+async def fetch_track_info(query: str) -> dict | None:
+    """Récupère les infos yt-dlp (URL fraîche à chaque appel pour éviter l'expiration)."""
     try:
         import yt_dlp
         ydl_opts = {
@@ -167,7 +189,7 @@ async def search_youtube(query: str):
             'source_address': '0.0.0.0',
         }
         loop = asyncio.get_event_loop()
-        def _search():
+        def _fetch():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 if query.startswith("http"):
                     info = ydl.extract_info(query, download=False)
@@ -183,10 +205,12 @@ async def search_youtube(query: str):
                     'webpage':   info.get('webpage_url', ''),
                     'duration':  info.get('duration', 0),
                     'thumbnail': info.get('thumbnail', ''),
+                    # Stocker la webpage_url pour re-fetch si besoin
+                    'source_query': info.get('webpage_url') or query,
                 }
-        return await loop.run_in_executor(None, _search)
+        return await loop.run_in_executor(None, _fetch)
     except Exception as e:
-        logger.error(f"yt-dlp: {e}")
+        logger.error(f"yt-dlp fetch: {e}")
         return None
 
 async def play_next(guild_id: str):
@@ -200,6 +224,15 @@ async def play_next(guild_id: str):
         return
     track = queue.pop(0)
     bot.now_playing[guild_id] = track
+
+    # Re-fetch l'URL fraîche juste avant de jouer (évite les URLs expirées)
+    try:
+        fresh = await fetch_track_info(track.get('source_query') or track['webpage'] or track['title'])
+        if fresh and fresh.get('url'):
+            track['url'] = fresh['url']
+    except Exception as e:
+        logger.warning(f"Re-fetch URL failed: {e}")
+
     try:
         source = discord.FFmpegPCMAudio(track['url'], **FFMPEG_OPTS)
         vol    = discord.PCMVolumeTransformer(source, volume=0.5)
@@ -208,7 +241,7 @@ async def play_next(guild_id: str):
             asyncio.run_coroutine_threadsafe(play_next(guild_id), bot.loop)
         vc.play(vol, after=after)
     except Exception as e:
-        logger.error(f"play_next: {e}")
+        logger.error(f"play_next error: {e}")
         if queue:
             await play_next(guild_id)
 
@@ -229,13 +262,10 @@ async def check_spam(message: discord.Message) -> bool:
                           if (now - t).total_seconds() < cfg.get("msg_time", 5)]
     spam, reason = False, ""
     if len(bot.msg_cache[uid]) > cfg.get("msg_limit", 5):
-        spam  = True
-        reason = f"Spam ({len(bot.msg_cache[uid])}/{cfg.get('msg_time',5)}s)"
-    mentions = (len(message.mentions) + len(message.role_mentions)
-                + (50 if message.mention_everyone else 0))
+        spam = True; reason = f"Spam ({len(bot.msg_cache[uid])}/{cfg.get('msg_time',5)}s)"
+    mentions = len(message.mentions) + len(message.role_mentions) + (50 if message.mention_everyone else 0)
     if mentions >= cfg.get("mention_limit", 5):
-        spam  = True
-        reason = f"Spam mentions ({mentions})"
+        spam = True; reason = f"Spam mentions ({mentions})"
     if spam:
         try:
             await message.delete()
@@ -260,34 +290,27 @@ async def add_xp(message: discord.Message):
     uid = message.author.id
     gid = str(message.guild.id)
     now = datetime.now(timezone.utc)
-    # Cooldown 60s
     last = bot.xp_cooldown.get(uid)
     if last and (now - last).total_seconds() < 60: return
     bot.xp_cooldown[uid] = now
-
-    data = get_xp(gid, str(uid))
-    gained = random.randint(15, 25)
-    data["xp"]       += gained
+    data    = get_xp(gid, str(uid))
+    data["xp"]       += random.randint(15, 25)
     data["messages"] += 1
-
     req = xp_for_level(data["level"] + 1)
     if data["xp"] >= req:
         data["level"] += 1
         data["xp"]    -= req
-        # Notif level up
-        gid_int = int(gid)
-        guild   = bot.get_guild(gid_int)
+        guild = bot.get_guild(int(gid))
         if guild:
-            ch = guild.get_channel(bot.logs_channels.get(gid, 0))
-            if not ch: ch = message.channel
-            e = mk_embed(f"{T.XP}  Level Up!",
-                         f"{message.author.mention} est maintenant **niveau {data['level']}** {T.STAR}",
-                         T.GOLD)
+            ch = guild.get_channel(bot.logs_channels.get(gid, 0)) or message.channel
+            e  = mk_embed(f"{T.XP}  Level Up!",
+                          f"{message.author.mention} est maintenant **niveau {data['level']}** {T.STAR}",
+                          T.GOLD)
             e.set_thumbnail(url=message.author.display_avatar.url)
             try: await ch.send(embed=e)
             except Exception: pass
 
-# ==================== GIVEAWAY ====================
+# ==================== GIVEAWAY (ANNONCE @everyone) ====================
 class GiveawayView(discord.ui.View):
     def __init__(self, gid):
         super().__init__(timeout=None)
@@ -306,15 +329,15 @@ class GiveawayBtn(discord.ui.Button):
         uid = interaction.user.id
         p   = g.setdefault("participants", [])
         if uid in p:
-            p.remove(uid); msg = f"{T.CROSS} Tu t'es retiré."
+            p.remove(uid); msg = f"{T.CROSS} Tu t'es retiré du giveaway."
         else:
             p.append(uid);  msg = f"{T.CHECK} Tu participes ! ({len(p)} participants)"
         try:
             em = interaction.message.embeds[0]
             for i, f in enumerate(em.fields):
                 if "Participants" in f.name:
-                    em.set_field_at(i, name=f"{T.STAR} Participants",
-                                    value=f"**{len(p)}**", inline=True); break
+                    em.set_field_at(i, name=f"{T.STAR} Participants", value=f"**{len(p)}**", inline=True)
+                    break
             await interaction.message.edit(embed=em)
         except Exception: pass
         await interaction.response.send_message(msg, ephemeral=True)
@@ -343,6 +366,8 @@ async def end_giveaway(mid, g):
             for wid in random.sample(p, min(g.get("winners", 1), len(p))):
                 try: winners.append(await bot.fetch_user(wid))
                 except Exception: pass
+
+        # Éditer le message original
         if winners:
             desc = "\n".join([f"{T.TROPHY} {w.mention}" for w in winners])
             e = mk_embed(f"{T.GIVEAWAY}  Giveaway Terminé",
@@ -355,20 +380,159 @@ async def end_giveaway(mid, g):
             msg = await ch.fetch_message(int(mid))
             await msg.edit(embed=e, view=None)
         except Exception: pass
+
+        # ✅ Annonce @everyone avec résultats
         if winners:
+            winners_mentions = " ".join([w.mention for w in winners])
+            winners_str      = ", ".join([str(w) for w in winners])
+            announce = discord.Embed(
+                title=f"{T.GIVEAWAY}  Félicitations ! Giveaway terminé !",
+                description=(
+                    f"**{g['title']}**\n"
+                    f"{T.GIFT} **Prix :** {g['prize']}\n"
+                    f"{T.LINE}\n"
+                    f"{T.TROPHY} **Gagnant(s) :** {winners_mentions}\n\n"
+                    f"*Bravo à {winners_str} !*"
+                ),
+                color=T.GOLD,
+                timestamp=datetime.now(timezone.utc)
+            )
+            announce.set_footer(text=f"{len(p)} participant(s) au total")
+            await ch.send(content="@everyone 🎉 **Le giveaway est terminé !**",
+                          embed=announce, allowed_mentions=discord.AllowedMentions(everyone=True))
+        else:
             await ch.send(
-                content=" ".join([w.mention for w in winners]),
-                embed=mk_embed(f"{T.GIVEAWAY}  Félicitations!",
-                               f"{', '.join([w.mention for w in winners])} gagne **{g['prize']}** !", T.GOLD))
+                embed=mk_embed(f"{T.GIVEAWAY}  Giveaway terminé",
+                               f"**{g['title']}**\nAucun gagnant — personne n'avait participé.", T.RED))
     except Exception as e: logger.error(f"end_giveaway: {e}")
+
+# ==================== POLL (AVEC DURÉE + ANNONCE @everyone) ====================
+POLL_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+
+class PollView(discord.ui.View):
+    def __init__(self, poll_id: str, options: list):
+        super().__init__(timeout=None)
+        for i, opt in enumerate(options[:5]):
+            self.add_item(PollBtn(poll_id, i, opt))
+
+class PollBtn(discord.ui.Button):
+    def __init__(self, poll_id: str, idx: int, label: str):
+        super().__init__(
+            label=label[:60],
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"poll_{poll_id}_{idx}",
+            emoji=POLL_EMOJIS[idx]
+        )
+        self.poll_id = poll_id
+        self.idx     = idx
+
+    async def callback(self, interaction: discord.Interaction):
+        poll = bot.polls.get(str(interaction.message.id)) or bot.polls.get(self.poll_id)
+        if not poll:
+            return await interaction.response.send_message(
+                "Sondage introuvable (bot redémarré ?).", ephemeral=True)
+        if poll.get("ended"):
+            return await interaction.response.send_message("Ce sondage est terminé.", ephemeral=True)
+
+        uid   = interaction.user.id
+        votes = poll.setdefault("votes", {})
+        if votes.get(uid) == self.idx:
+            del votes[uid]
+            await interaction.response.send_message(f"{T.CROSS} Vote retiré.", ephemeral=True)
+        else:
+            votes[uid] = self.idx
+            await interaction.response.send_message(
+                f"{T.CHECK} Voté pour **{poll['options'][self.idx]}** !", ephemeral=True)
+        try:
+            await _update_poll_embed(interaction.message, poll)
+        except Exception as e:
+            logger.error(f"Poll update: {e}")
+
+async def _update_poll_embed(message, poll):
+    counts = [0] * len(poll["options"])
+    for v in poll.get("votes", {}).values():
+        if 0 <= v < len(counts): counts[v] += 1
+    total = sum(counts)
+    desc  = f"**{poll['question']}**\n\n"
+    for i, opt in enumerate(poll["options"]):
+        pct = int(counts[i] / total * 100) if total > 0 else 0
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        desc += f"{POLL_EMOJIS[i]} **{opt}**\n`{bar}` {counts[i]} vote{'s' if counts[i] != 1 else ''} ({pct}%)\n\n"
+    desc += f"{T.CHART} **{total} vote{'s' if total != 1 else ''} au total**"
+    if poll.get("end_time"):
+        end = datetime.fromisoformat(poll["end_time"])
+        desc += f"\n\n{T.CLOCK} Fin : <t:{int(end.timestamp())}:R>"
+    await message.edit(embed=mk_embed(f"{T.POLL}  Sondage", desc, T.BLURPLE))
+
+async def _build_results_embed(poll) -> discord.Embed:
+    """Génère l'embed de résultats final pour le poll."""
+    counts = [0] * len(poll["options"])
+    for v in poll.get("votes", {}).values():
+        if 0 <= v < len(counts): counts[v] += 1
+    total = sum(counts)
+    # Trouver le/les gagnant(s)
+    max_count = max(counts) if counts else 0
+    winners   = [poll["options"][i] for i, c in enumerate(counts) if c == max_count and max_count > 0]
+
+    desc = f"**{poll['question']}**\n\n"
+    for i, opt in enumerate(poll["options"]):
+        pct   = int(counts[i] / total * 100) if total > 0 else 0
+        bar   = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        crown = " 👑" if opt in winners and max_count > 0 else ""
+        desc += f"{POLL_EMOJIS[i]} **{opt}**{crown}\n`{bar}` {counts[i]} vote{'s' if counts[i] != 1 else ''} ({pct}%)\n\n"
+    desc += f"{T.CHART} **{total} vote{'s' if total != 1 else ''} au total**"
+
+    e = mk_embed(f"{T.POLL}  Résultats du sondage", desc, T.GOLD)
+    if winners and max_count > 0:
+        e.add_field(name="🏆 Résultat", value=" / ".join(winners), inline=False)
+    return e
+
+@tasks.loop(seconds=30)
+async def check_polls():
+    now = datetime.now(timezone.utc)
+    for mid, poll in list(bot.polls.items()):
+        if poll.get("ended") or not poll.get("end_time"): continue
+        try:
+            end = datetime.fromisoformat(poll["end_time"])
+            if end.tzinfo is None: end = end.replace(tzinfo=timezone.utc)
+            if now >= end:
+                await end_poll(mid, poll)
+        except Exception as e: logger.error(f"Poll loop: {e}")
+
+async def end_poll(mid, poll):
+    try:
+        guild = bot.get_guild(int(poll["guild_id"]))
+        if not guild: return
+        ch = guild.get_channel(int(poll["channel_id"]))
+        if not ch: return
+        poll["ended"] = True
+
+        # Éditer le message original avec résultats finaux
+        try:
+            msg = await ch.fetch_message(int(mid))
+            results_embed = await _build_results_embed(poll)
+            await msg.edit(embed=results_embed, view=None)
+        except Exception: pass
+
+        # ✅ Annonce @everyone avec résultats
+        results_embed2 = await _build_results_embed(poll)
+        total_votes = sum(1 for _ in poll.get("votes", {}))
+        results_embed2.set_footer(text=f"{total_votes} participant(s) ont voté")
+        await ch.send(
+            content="@everyone 📊 **Le sondage est terminé ! Voici les résultats :**",
+            embed=results_embed2,
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
+    except Exception as e: logger.error(f"end_poll: {e}")
 
 # ==================== EVENTS ====================
 @bot.event
 async def on_ready():
     logger.info(f"⚡ {bot.user} | {len(bot.guilds)} serveurs")
     if not check_giveaways.is_running(): check_giveaways.start()
+    if not check_polls.is_running():     check_polls.start()
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V6"))
+        activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V7"))
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -452,7 +616,6 @@ async def on_message(message: discord.Message):
         if await check_spam(message): return
         await add_xp(message)
 
-    # IA : @mention ou mot "aegis"
     bot_mentioned  = bot.user in (message.mentions or [])
     name_mentioned = "aegis" in message.content.lower()
 
@@ -628,62 +791,31 @@ class RoleMenuView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(RoleMenu(roles))
 
-# ==================== POLL (CORRIGÉ) ====================
-POLL_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-
-class PollView(discord.ui.View):
-    def __init__(self, poll_id: str, options: list):
+# ==================== SUGGESTION VIEW ====================
+class SuggestionView(discord.ui.View):
+    def __init__(self, suggestion_id: str):
         super().__init__(timeout=None)
-        for i, opt in enumerate(options[:5]):
-            self.add_item(PollBtn(poll_id, i, opt))
+    @discord.ui.button(label="👍 Approuver", style=discord.ButtonStyle.success, custom_id="suggest_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("Permission refusée.", ephemeral=True)
+        e = interaction.message.embeds[0]
+        e.color = T.GREEN
+        e.title = f"✅  Suggestion approuvée"
+        e.set_footer(text=f"Approuvé par {interaction.user.display_name}")
+        await interaction.message.edit(embed=e, view=None)
+        await interaction.response.send_message("Suggestion approuvée !", ephemeral=True)
 
-class PollBtn(discord.ui.Button):
-    def __init__(self, poll_id: str, idx: int, label: str):
-        super().__init__(
-            label=label[:60],
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"poll_{poll_id}_{idx}",
-            emoji=POLL_EMOJIS[idx]
-        )
-        self.poll_id = poll_id
-        self.idx     = idx
-
-    async def callback(self, interaction: discord.Interaction):
-        # Chercher le poll dans le dict (par id du message)
-        poll = bot.polls.get(str(interaction.message.id))
-        if not poll:
-            # Fallback: chercher par poll_id embedded dans custom_id
-            poll = bot.polls.get(self.poll_id)
-        if not poll:
-            return await interaction.response.send_message(
-                "Sondage introuvable (redémarrage du bot ?)", ephemeral=True)
-
-        uid   = interaction.user.id
-        votes = poll.setdefault("votes", {})
-
-        if votes.get(uid) == self.idx:
-            del votes[uid]
-            await interaction.response.send_message(f"{T.CROSS} Vote retiré.", ephemeral=True)
-        else:
-            votes[uid] = self.idx
-            await interaction.response.send_message(
-                f"{T.CHECK} Voté pour **{poll['options'][self.idx]}** !", ephemeral=True)
-
-        # Rebuild embed
-        try:
-            counts = [0] * len(poll["options"])
-            for v in votes.values():
-                if 0 <= v < len(counts): counts[v] += 1
-            total = sum(counts)
-            desc  = f"**{poll['question']}**\n\n"
-            for i, opt in enumerate(poll["options"]):
-                pct = int(counts[i] / total * 100) if total > 0 else 0
-                bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-                desc += f"{POLL_EMOJIS[i]} **{opt}**\n`{bar}` {counts[i]} vote{'s' if counts[i] != 1 else ''} ({pct}%)\n\n"
-            desc += f"{T.CHART} **{total} vote{'s' if total != 1 else ''} au total**"
-            await interaction.message.edit(embed=mk_embed(f"{T.POLL}  Sondage", desc, T.BLURPLE))
-        except Exception as e:
-            logger.error(f"Poll update: {e}")
+    @discord.ui.button(label="👎 Refuser", style=discord.ButtonStyle.danger, custom_id="suggest_refuse")
+    async def refuse(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("Permission refusée.", ephemeral=True)
+        e = interaction.message.embeds[0]
+        e.color = T.RED
+        e.title = f"❌  Suggestion refusée"
+        e.set_footer(text=f"Refusé par {interaction.user.display_name}")
+        await interaction.message.edit(embed=e, view=None)
+        await interaction.response.send_message("Suggestion refusée.", ephemeral=True)
 
 # ==================== REGLEMENT MODAL ====================
 class ReglementModal(discord.ui.Modal, title="✍️ Règlement personnalisé"):
@@ -703,78 +835,131 @@ class ReglementModal(discord.ui.Modal, title="✍️ Règlement personnalisé"):
         await interaction.channel.send(embed=e, view=RulesView() if self.avec_bouton else None)
         await interaction.response.send_message(embed=ok("Règlement envoyé !"), ephemeral=True)
 
-# ==================== SETUP STRUCTURES ====================
+# ==================== SETUP STRUCTURES (ENRICHIES) ====================
 SETUP_STRUCTURES = {
     "communaute": {
         "label": "🌐 Communauté / Discussion",
         "roles": [
             ("━━ STAFF ━━", 0x2B2D31), ("👑 Fondateur", T.PINK), ("⚔️ Admin", 0xE74C3C),
-            ("🛡️ Modérateur", T.BLURPLE), ("━━ MEMBRES ━━", 0x2B2D31),
-            ("💎 VIP", 0xF1C40F), ("🔥 Actif", 0xE74C3C), ("✅ Vérifié", T.GREEN), ("🎮 Membre", 0x95A5A6)
+            ("🛡️ Modérateur", T.BLURPLE), ("🤝 Helper", T.TEAL),
+            ("━━ MEMBRES ━━", 0x2B2D31),
+            ("💎 VIP", 0xF1C40F), ("🔥 Actif", 0xE74C3C), ("🎨 Créateur", T.PURPLE),
+            ("✅ Vérifié", T.GREEN), ("🎮 Membre", 0x95A5A6)
         ],
         "structure": {
-            "📌 IMPORTANT": (["📜・règles", "📢・annonces", "📰・news"], []),
-            "👋 ACCUEIL":   (["👋・bienvenue", "🚪・départs", "✅・vérification", "🎫・rôles"], []),
-            "💬 GÉNÉRAL":   (["💬・général", "🖼️・médias", "😂・mèmes", "🤖・bot-commands"],
-                             ["🔊 Général", "🔊 Chill", "🎵 Musique"]),
-            "📩 SUPPORT":   (["❓・aide", "💡・suggestions"], []),
-            "🔒 STAFF":     (["📋・staff-chat", "📊・logs", "📝・candidatures"], ["🔒 Staff"]),
-            "🎫 Tickets":   ([], []),
+            "📌 IMPORTANT":  (["📜・règles", "📢・annonces", "📰・news", "🗺️・liens-utiles"], []),
+            "👋 ACCUEIL":    (["👋・bienvenue", "🚪・départs", "✅・vérification",
+                               "🎫・rôles", "📝・présentation"], []),
+            "💬 GÉNÉRAL":   (["💬・général", "🖼️・médias", "😂・mèmes", "🎨・créations",
+                              "🎶・partage-musique", "📸・photos", "🤖・bot-commands"],
+                             ["🔊 Général", "🔊 Chill", "🎵 Musique", "🎮 Gaming"]),
+            "🎉 EVENTS":     (["🎉・événements", "📊・sondages", "🏆・concours", "🎁・giveaways"], []),
+            "📩 SUPPORT":    (["❓・aide", "💡・suggestions", "🐛・rapports-bugs"], []),
+            "🔒 STAFF":      (["📋・staff-chat", "📊・logs", "📝・candidatures",
+                               "⚙️・config-bot", "🚨・rapports"], ["🔒 Staff", "🔒 Staff Vocal"]),
+            "🎫 Tickets":    ([], []),
         }
     },
     "gaming": {
         "label": "🎮 Gaming",
         "roles": [
             ("━━ STAFF ━━", 0x2B2D31), ("👑 Fondateur", T.PINK), ("⚔️ Admin", 0xE74C3C),
-            ("🛡️ Modérateur", T.BLURPLE), ("━━ JEUX ━━", 0x2B2D31),
-            ("🏆 Pro", 0xF1C40F), ("🔥 Tryhard", 0xE74C3C), ("🎮 Casual", 0x95A5A6), ("✅ Vérifié", T.GREEN)
+            ("🛡️ Modérateur", T.BLURPLE), ("━━ RANGS ━━", 0x2B2D31),
+            ("🏆 Légende", 0xF1C40F), ("💎 Diamant", 0x3498DB),
+            ("🔥 Tryhard", 0xE74C3C), ("🎮 Casual", 0x95A5A6),
+            ("🎯 Speedrunner", T.TEAL), ("✅ Vérifié", T.GREEN)
         ],
         "structure": {
-            "📌 IMPORTANT": (["📜・règles", "📢・annonces"], []),
-            "👋 ACCUEIL":   (["👋・bienvenue", "🚪・départs", "✅・vérification"], []),
-            "🎮 GAMING":    (["🎮・général", "📸・clips", "🏆・tournois", "💡・stratégie"],
-                             ["🎮 Gaming 1", "🎮 Gaming 2", "🎮 Gaming 3"]),
-            "🎵 MUSIQUE":   (["🎵・playlist"], ["🎵 Musique"]),
-            "🤖 BOT":       (["🤖・commandes"], []),
-            "📩 SUPPORT":   (["❓・aide", "💡・suggestions"], []),
-            "🔒 STAFF":     (["📋・staff-chat", "📊・logs"], ["🔒 Staff"]),
-            "🎫 Tickets":   ([], []),
+            "📌 IMPORTANT":  (["📜・règles", "📢・annonces", "🆕・nouveautés"], []),
+            "👋 ACCUEIL":    (["👋・bienvenue", "🚪・départs", "✅・vérification",
+                               "📝・présentation", "🎮・jeux-joués"], []),
+            "🎮 GAMING":     (["🎮・général", "📸・clips", "🏆・tournois",
+                               "💡・stratégie", "🐛・bugs-reports", "💰・échanges"],
+                              ["🎮 Gaming 1", "🎮 Gaming 2", "🎮 Gaming 3", "🎮 Gaming 4"]),
+            "🎵 MUSIQUE":    (["🎵・playlist", "🤖・bot-musique"], ["🎵 Musique"]),
+            "📺 STREAMS":    (["📢・live-annonces", "💬・discussion-streams"], ["📺 Stream 1", "📺 Stream 2"]),
+            "🎉 EVENTS":     (["🏆・tournois", "🎁・giveaways", "📊・sondages"], []),
+            "📩 SUPPORT":    (["❓・aide", "💡・suggestions"], []),
+            "🔒 STAFF":      (["📋・staff-chat", "📊・logs", "⚙️・config"], ["🔒 Staff"]),
+            "🎫 Tickets":    ([], []),
         }
     },
     "rp": {
         "label": "🎭 Jeu de Rôle (RP)",
         "roles": [
             ("━━ STAFF ━━", 0x2B2D31), ("👑 Maître du Jeu", T.PINK), ("⚔️ Modérateur RP", 0xE74C3C),
-            ("━━ GRADES RP ━━", 0x2B2D31), ("🔮 Légende", 0xF1C40F), ("⚔️ Héros", 0xE74C3C),
+            ("📖 Scénariste", T.TEAL), ("━━ GRADES RP ━━", 0x2B2D31),
+            ("🔮 Légende", 0xF1C40F), ("⚔️ Héros", 0xE74C3C),
             ("🗡️ Aventurier", T.BLURPLE), ("🌱 Novice", T.GREEN), ("✅ Vérifié", T.GREEN)
         ],
         "structure": {
-            "📌 IMPORTANT": (["📜・règles-rp", "📢・annonces", "📖・lore"], []),
-            "👋 ACCUEIL":   (["👋・arrivées", "🚪・départs", "✅・vérification", "📝・fiches-perso"], []),
-            "🎭 ROLEPLAY":  (["🏙️・ville", "🌲・forêt", "🏰・château", "⚔️・arène", "🍺・taverne"],
-                             ["🎭 RP Vocal 1", "🎭 RP Vocal 2"]),
-            "💬 HORS-JEU":  (["💬・général-hj", "🖼️・médias"], ["🔊 Hors-Jeu"]),
-            "📩 SUPPORT":   (["❓・aide", "💡・suggestions"], []),
-            "🔒 STAFF":     (["📋・staff-chat", "📊・logs"], ["🔒 Staff MJ"]),
-            "🎫 Tickets":   ([], []),
+            "📌 IMPORTANT":  (["📜・règles-rp", "📢・annonces", "📖・lore",
+                               "🗺️・carte-du-monde", "📅・agenda-rp"], []),
+            "👋 ACCUEIL":    (["👋・arrivées", "🚪・départs", "✅・vérification",
+                               "📝・fiches-perso", "🎭・présentation-perso"], []),
+            "🏙️ LIEUX":     (["🏙️・ville-principale", "🌲・forêt-ancienne",
+                               "🏰・château-royal", "⚔️・arène-de-combat",
+                               "🍺・taverne-du-voyageur", "🏔️・montagne-mystique",
+                               "🌊・port-et-docks", "⛪・temple-sacré"],
+                              ["🎭 RP Vocal 1", "🎭 RP Vocal 2", "🎭 RP Vocal 3"]),
+            "💬 HORS-JEU":   (["💬・général-hj", "🖼️・médias", "🎨・fan-art",
+                               "💡・suggestions-rp", "📊・sondages"], ["🔊 Hors-Jeu"]),
+            "📩 SUPPORT":    (["❓・aide", "🐛・rapports"], []),
+            "🔒 STAFF":      (["📋・staff-chat", "📊・logs", "🎲・jets-de-dés"], ["🔒 Staff MJ"]),
+            "🎫 Tickets":    ([], []),
         }
     },
     "education": {
         "label": "📚 Éducation / Études",
         "roles": [
             ("━━ STAFF ━━", 0x2B2D31), ("👑 Admin", T.PINK), ("📚 Modérateur", T.BLURPLE),
-            ("━━ NIVEAUX ━━", 0x2B2D31), ("🎓 Diplômé", 0xF1C40F), ("📖 Étudiant", 0xE74C3C),
+            ("👨‍🏫 Tuteur", T.TEAL), ("━━ NIVEAUX ━━", 0x2B2D31),
+            ("🎓 Diplômé", 0xF1C40F), ("📖 Étudiant", 0xE74C3C),
             ("🌱 Débutant", T.GREEN), ("✅ Vérifié", T.GREEN)
         ],
         "structure": {
-            "📌 IMPORTANT": (["📜・règles", "📢・annonces", "📅・planning"], []),
-            "👋 ACCUEIL":   (["👋・arrivées", "🚪・départs", "✅・vérification"], []),
-            "📚 ÉTUDES":    (["📖・cours-général", "🔢・maths", "💻・informatique", "🌍・langues", "🔬・sciences"],
-                             ["📚 Révisions 1", "📚 Révisions 2"]),
-            "💬 DÉTENTE":   (["💬・général", "😂・mèmes"], ["🔊 Détente"]),
-            "📩 SUPPORT":   (["❓・aide", "💡・suggestions"], []),
-            "🔒 STAFF":     (["📋・staff-chat", "📊・logs"], ["🔒 Staff"]),
-            "🎫 Tickets":   ([], []),
+            "📌 IMPORTANT":  (["📜・règles", "📢・annonces", "📅・planning",
+                               "📰・ressources-utiles", "🗂️・organisation"], []),
+            "👋 ACCUEIL":    (["👋・arrivées", "🚪・départs", "✅・vérification",
+                               "📝・présentation", "🎯・objectifs"], []),
+            "📚 ÉTUDES":     (["📖・cours-général", "🔢・maths", "💻・informatique",
+                               "🌍・langues", "🔬・sciences", "✍️・lettres-philo",
+                               "🏛️・histoire-géo", "🎨・arts"],
+                              ["📚 Révisions 1", "📚 Révisions 2", "📚 Révisions 3"]),
+            "🤝 ENTRAIDE":   (["🆘・demande-aide", "💡・partage-astuces",
+                               "📄・partage-cours", "✅・corrigés"], ["🤝 Tutorat 1", "🤝 Tutorat 2"]),
+            "💬 DÉTENTE":    (["💬・général", "😂・mèmes", "🎮・gaming",
+                               "🎵・musique"], ["🔊 Détente", "🎮 Gaming"]),
+            "📩 SUPPORT":    (["❓・aide", "💡・suggestions"], []),
+            "🔒 STAFF":      (["📋・staff-chat", "📊・logs"], ["🔒 Staff"]),
+            "🎫 Tickets":    ([], []),
+        }
+    },
+    "anime": {
+        "label": "🎌 Anime / Manga",
+        "roles": [
+            ("━━ STAFF ━━", 0x2B2D31), ("👑 Fondateur", T.PINK), ("⚔️ Admin", 0xE74C3C),
+            ("🛡️ Modérateur", T.BLURPLE), ("━━ FANS ━━", 0x2B2D31),
+            ("🌟 Otaku Légendaire", 0xF1C40F), ("📖 Lecteur Assidu", T.TEAL),
+            ("🎌 Weeaboo", T.PURPLE), ("✅ Vérifié", T.GREEN)
+        ],
+        "structure": {
+            "📌 IMPORTANT":  (["📜・règles", "📢・annonces", "🆕・sorties-anime",
+                               "⚠️・spoilers-warning"], []),
+            "👋 ACCUEIL":    (["👋・bienvenue", "🚪・départs", "✅・vérification",
+                               "🎌・présentation", "🎭・waifu-husbando"], []),
+            "🎌 ANIME":      (["💬・général-anime", "🔥・currently-watching",
+                               "⭐・recommandations", "🏆・top-animes",
+                               "📸・fan-art", "🎵・openings-endings"], []),
+            "📖 MANGA":      (["📖・général-manga", "🆕・nouveaux-chapitres",
+                               "💬・discussions-manga", "🖊️・manhwa-manhua"], []),
+            "⚠️ SPOILERS":   (["⚠️・spoilers-généraux", "🔒・spoilers-récents"], []),
+            "🎵 WEEB":       (["🎵・musique-anime", "🎮・jeux-anime",
+                               "📺・osamu-tezuka", "💻・vtubers"],
+                              ["🔊 Général", "🎵 Weeb Music"]),
+            "🎉 EVENTS":     (["🏆・concours-fan-art", "📊・sondages", "🎁・giveaways"], []),
+            "🔒 STAFF":      (["📋・staff-chat", "📊・logs", "📝・candidatures"], ["🔒 Staff"]),
+            "🎫 Tickets":    ([], []),
         }
     }
 }
@@ -783,7 +968,8 @@ SETUP_STRUCTURES = {
 
 @bot.tree.command(name="aide", description="Liste de toutes les commandes")
 async def aide(interaction: discord.Interaction):
-    e = discord.Embed(title=f"{T.SPARKLE}  Aegis V6", description="Toutes les commandes disponibles",
+    e = discord.Embed(title=f"{T.SPARKLE}  Aegis V7 — Commandes",
+                      description="Toutes les commandes disponibles",
                       color=T.PINK, timestamp=datetime.now(timezone.utc))
     e.add_field(name=f"{T.DIAMOND}  Modération",
                 value="`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn` `/unwarn` `/warns` `/rename` `/purge`", inline=False)
@@ -792,18 +978,18 @@ async def aide(interaction: discord.Interaction):
     e.add_field(name=f"{T.ROLE}  Rôles",
                 value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`", inline=False)
     e.add_field(name=f"{T.GEAR}  Systèmes",
-                value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll`", inline=False)
+                value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`", inline=False)
     e.add_field(name=f"{T.WAVE}  Membres",
-                value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/setup` `/tempvoice` `/autorole`", inline=False)
+                value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/setup` `/tempvoice`", inline=False)
     e.add_field(name=f"{T.MUSIC}  Musique",
-                value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying`", inline=False)
+                value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`", inline=False)
     e.add_field(name=f"{T.XP}  XP & Stats",
-                value="`/rank` `/top` `/userinfo` `/serverinfo`", inline=False)
+                value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`", inline=False)
     e.add_field(name=f"{T.MEGA}  Divers",
-                value="`/dire` — faire parler le bot à ta place", inline=False)
+                value="`/dire` `/embed` `/sondage-rapide` `/tirage`", inline=False)
     e.add_field(name=f"{T.AI}  IA",
-                value="Mentionne **@Aegis** ou écris **aegis** dans ton message !", inline=False)
-    e.set_footer(text="Aegis V6")
+                value="Mentionne **@Aegis** ou écris **aegis** dans un message !", inline=False)
+    e.set_footer(text="Aegis V7 • /aide pour revoir cette liste")
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="ping", description="Latence du bot")
@@ -813,10 +999,7 @@ async def ping(interaction: discord.Interaction):
 
 # ── Commande DIRE ──
 @bot.tree.command(name="dire", description="Faire parler le bot à ta place dans un salon")
-@app_commands.describe(
-    message="Le message à envoyer",
-    salon="Salon cible (vide = salon actuel)"
-)
+@app_commands.describe(message="Le message à envoyer", salon="Salon cible (vide = actuel)")
 @app_commands.default_permissions(manage_messages=True)
 async def dire(interaction: discord.Interaction, message: str, salon: discord.TextChannel = None):
     target = salon or interaction.channel
@@ -825,8 +1008,86 @@ async def dire(interaction: discord.Interaction, message: str, salon: discord.Te
         await interaction.response.send_message(
             embed=ok("Message envoyé", f"Envoyé dans {target.mention}"), ephemeral=True)
     except Exception as ex:
-        await interaction.response.send_message(
-            embed=err("Erreur", str(ex)[:100]), ephemeral=True)
+        await interaction.response.send_message(embed=err("Erreur", str(ex)[:100]), ephemeral=True)
+
+# ── Commande EMBED ──
+@bot.tree.command(name="embed", description="Envoyer un embed personnalisé")
+@app_commands.describe(titre="Titre", contenu="Contenu", couleur="Couleur hex (ex: #FF1493)",
+                        salon="Salon cible")
+@app_commands.default_permissions(manage_messages=True)
+async def embed_cmd(interaction: discord.Interaction, titre: str, contenu: str,
+                    couleur: str = "#5865F2", salon: discord.TextChannel = None):
+    target = salon or interaction.channel
+    try:
+        color = int(couleur.replace("#", ""), 16)
+    except ValueError:
+        color = T.BLURPLE
+    e = discord.Embed(title=titre, description=contenu, color=color,
+                      timestamp=datetime.now(timezone.utc))
+    e.set_footer(text=f"Par {interaction.user.display_name}")
+    await target.send(embed=e)
+    await interaction.response.send_message(embed=ok("Embed envoyé !", f"Dans {target.mention}"), ephemeral=True)
+
+# ── Commande SONDAGE RAPIDE (oui/non) ──
+@bot.tree.command(name="sondage-rapide", description="Sondage Oui/Non rapide")
+@app_commands.describe(question="Ta question")
+async def sondage_rapide(interaction: discord.Interaction, question: str):
+    e = mk_embed(f"{T.POLL}  Sondage rapide", f"**{question}**\n\nRéagis pour voter !", T.BLURPLE)
+    e.set_footer(text=f"Posé par {interaction.user.display_name}")
+    await interaction.response.send_message(embed=e)
+    msg = await interaction.original_response()
+    await msg.add_reaction("👍")
+    await msg.add_reaction("👎")
+    await msg.add_reaction("🤷")
+
+# ── Commande TIRAGE ──
+@bot.tree.command(name="tirage", description="Faire un tirage au sort parmi des options")
+@app_commands.describe(options="Les options séparées par des virgules (ex: Pierre,Feuille,Ciseaux)")
+async def tirage(interaction: discord.Interaction, options: str):
+    choices = [o.strip() for o in options.split(",") if o.strip()]
+    if len(choices) < 2:
+        return await interaction.response.send_message(
+            embed=err("Erreur", "Donne au moins 2 options séparées par des virgules."), ephemeral=True)
+    winner = random.choice(choices)
+    desc = f"**Options :** {' • '.join(choices)}\n\n{T.ARROW} **Résultat : {winner}**"
+    await interaction.response.send_message(embed=mk_embed(f"{T.TROPHY}  Tirage au sort", desc, T.GOLD))
+
+# ── Commande AVATAR ──
+@bot.tree.command(name="avatar", description="Voir l'avatar d'un membre en grand")
+@app_commands.describe(membre="Le membre (vide = toi)")
+async def avatar(interaction: discord.Interaction, membre: discord.Member = None):
+    m = membre or interaction.user
+    e = discord.Embed(title=f"🖼️  Avatar de {m.display_name}", color=T.BLURPLE)
+    e.set_image(url=m.display_avatar.with_size(1024).url)
+    e.set_footer(text=f"ID : {m.id}")
+    await interaction.response.send_message(embed=e)
+
+# ── Commande SUGGESTION ──
+@bot.tree.command(name="suggestion", description="Envoyer une suggestion au staff")
+@app_commands.describe(texte="Ta suggestion", salon="Salon des suggestions (vide = auto-detect)")
+async def suggestion(interaction: discord.Interaction, texte: str,
+                      salon: discord.TextChannel = None):
+    # Auto-detect salon suggestions
+    if not salon:
+        for name in ["💡・suggestions", "suggestions", "suggest", "idées"]:
+            salon = discord.utils.get(interaction.guild.text_channels, name=name)
+            if salon: break
+    if not salon:
+        return await interaction.response.send_message(
+            embed=err("Salon introuvable",
+                      "Crée un salon `💡・suggestions` ou précise le salon avec `/suggestion salon:#ton-salon`."),
+            ephemeral=True)
+    e = mk_embed(f"💡  Nouvelle suggestion", texte, T.GOLD)
+    e.add_field(name="Proposé par", value=f"{interaction.user.mention}", inline=True)
+    e.add_field(name="Statut", value="En attente ⏳", inline=True)
+    e.set_thumbnail(url=interaction.user.display_avatar.url)
+    e.set_footer(text=f"ID : {interaction.user.id}")
+    msg = await salon.send(embed=e, view=SuggestionView(str(interaction.id)))
+    await msg.add_reaction("👍")
+    await msg.add_reaction("👎")
+    await interaction.response.send_message(
+        embed=ok("Suggestion envoyée !", f"Ta suggestion a été soumise dans {salon.mention}."),
+        ephemeral=True)
 
 # ── Musique ──
 @bot.tree.command(name="play", description="Jouer une musique depuis YouTube")
@@ -839,10 +1100,10 @@ async def play(interaction: discord.Interaction, recherche: str):
     gid = str(interaction.guild.id)
 
     await interaction.followup.send(embed=inf(f"{T.MUSIC}  Recherche...", f"🔍 `{recherche}`"))
-    track = await search_youtube(recherche)
+    track = await fetch_track_info(recherche)
     if not track or not track.get('url'):
         return await interaction.edit_original_response(
-            embed=err("Introuvable", "Aucun résultat. Essaie un autre titre ou un lien direct."))
+            embed=err("Introuvable", "Aucun résultat. Essaie un autre titre ou un lien direct YouTube."))
 
     vc = bot.vc_pool.get(gid)
     if not vc or not vc.is_connected():
@@ -931,12 +1192,25 @@ async def nowplaying(interaction: discord.Interaction):
     gid = str(interaction.guild.id)
     np  = bot.now_playing.get(gid)
     if not np:
-        return await interaction.response.send_message(
-            embed=inf("Rien en cours"), ephemeral=True)
-    e = mk_embed(f"{T.MUSIC}  En cours", f"**{np['title']}**\n⏱️ `{format_duration(np['duration'])}`", T.BLURPLE)
+        return await interaction.response.send_message(embed=inf("Rien en cours"), ephemeral=True)
+    e = mk_embed(f"{T.MUSIC}  En cours",
+                 f"**{np['title']}**\n⏱️ `{format_duration(np['duration'])}`", T.BLURPLE)
     if np.get('thumbnail'): e.set_thumbnail(url=np['thumbnail'])
     if np.get('webpage'):   e.add_field(name="Lien", value=f"[YouTube]({np['webpage']})")
     await interaction.response.send_message(embed=e)
+
+@bot.tree.command(name="volume", description="Régler le volume de la musique (0-100)")
+@app_commands.describe(niveau="Volume entre 0 et 100")
+async def volume(interaction: discord.Interaction, niveau: int):
+    gid = str(interaction.guild.id)
+    vc  = bot.vc_pool.get(gid)
+    if not vc or not vc.is_playing():
+        return await interaction.response.send_message(embed=err("Rien en cours"), ephemeral=True)
+    niveau = max(0, min(100, niveau))
+    if vc.source:
+        vc.source.volume = niveau / 100
+    await interaction.response.send_message(
+        embed=ok(f"Volume : {niveau}%", f"{'🔇' if niveau == 0 else '🔊'} Réglé à {niveau}%"))
 
 # ── Modération ──
 @bot.tree.command(name="warn", description="Avertir un membre")
@@ -961,6 +1235,7 @@ async def warn(interaction: discord.Interaction, membre: discord.Member, raison:
         except Exception: pass
     if sanction: e.add_field(name="⚡ Sanction auto", value=sanction)
     await interaction.response.send_message(embed=e)
+    await log_action(interaction.guild, "Warn", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}", T.ORANGE)
     try:
         await membre.send(embed=mk_embed(f"{T.WARN}  Avertissement reçu",
                                          f"**Serveur :** {interaction.guild.name}\n**Raison :** {raison}\n**Total :** {count}", T.ORANGE))
@@ -998,6 +1273,7 @@ async def ban(interaction: discord.Interaction, membre: discord.Member, raison: 
     await membre.ban(reason=raison)
     await interaction.response.send_message(
         embed=mk_embed(f"{T.BAN}  Banni", f"{membre.mention}\n**Raison :** {raison}", T.RED))
+    await log_action(interaction.guild, "Ban", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}", T.RED)
 
 @bot.tree.command(name="unban", description="Débannir un utilisateur")
 @app_commands.describe(user_id="ID de l'utilisateur")
@@ -1017,6 +1293,7 @@ async def kick(interaction: discord.Interaction, membre: discord.Member, raison:
     await membre.kick(reason=raison)
     await interaction.response.send_message(
         embed=mk_embed(f"{T.KICK}  Expulsé", f"{membre.mention}\n**Raison :** {raison}", T.ORANGE))
+    await log_action(interaction.guild, "Kick", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}", T.ORANGE)
 
 @bot.tree.command(name="mute", description="Mute un membre")
 @app_commands.describe(membre="Le membre", duree="Durée en minutes")
@@ -1167,11 +1444,8 @@ async def panel(interaction: discord.Interaction, titre: str = "Support",
     await interaction.response.send_message(embed=ok("Panel créé !"), ephemeral=True)
 
 @bot.tree.command(name="reglement", description="Envoyer le règlement")
-@app_commands.describe(
-    type_reglement="defaut = règles du bot | perso = tu écris toi-même",
-    avec_bouton="Ajouter bouton d'acceptation",
-    role="Rôle donné à l'acceptation"
-)
+@app_commands.describe(type_reglement="defaut = règles du bot | perso = tu écris toi-même",
+                        avec_bouton="Ajouter bouton d'acceptation", role="Rôle donné à l'acceptation")
 @app_commands.choices(type_reglement=[
     app_commands.Choice(name="Défaut (règles du bot)", value="defaut"),
     app_commands.Choice(name="Personnalisé (j'écris moi-même)", value="perso"),
@@ -1189,6 +1463,7 @@ async def reglement(interaction: discord.Interaction, type_reglement: str = "def
             (f"{T.STAR}  Publicité",      "Toute pub non autorisée est interdite."),
             (f"{T.CRYSTAL}  Contenu",     "Aucun contenu NSFW, violent ou illégal."),
             (f"{T.CROWN}  Staff",         "Les décisions du staff sont finales."),
+            (f"{T.SHIELD}  Respect RGPD", "Ne partage jamais les données personnelles d'autrui."),
         ]
         e = discord.Embed(title=f"{T.SHIELD}  Règlement du serveur", description=T.LINE,
                           color=T.BLURPLE, timestamp=datetime.now(timezone.utc))
@@ -1259,10 +1534,10 @@ async def giveaway_cmd(interaction: discord.Interaction, titre: str, prix: str,
 @app_commands.default_permissions(administrator=True)
 async def reroll(interaction: discord.Interaction, message_id: str):
     g = bot.giveaways.get(message_id)
-    if not g:      return await interaction.response.send_message(embed=err("Introuvable"), ephemeral=True)
+    if not g:          return await interaction.response.send_message(embed=err("Introuvable"), ephemeral=True)
     if not g.get("ended"): return await interaction.response.send_message(embed=err("En cours"), ephemeral=True)
     p = g.get("participants", [])
-    if not p:      return await interaction.response.send_message(embed=err("Aucun participant"), ephemeral=True)
+    if not p:          return await interaction.response.send_message(embed=err("Aucun participant"), ephemeral=True)
     winners = []
     for wid in random.sample(p, min(g.get("winners", 1), len(p))):
         try: winners.append(await bot.fetch_user(wid))
@@ -1276,31 +1551,49 @@ async def reroll(interaction: discord.Interaction, message_id: str):
     else:
         await interaction.response.send_message(embed=err("Erreur reroll"), ephemeral=True)
 
-@bot.tree.command(name="poll", description="Créer un sondage interactif")
+# ── Poll avec durée ──
+@bot.tree.command(name="poll", description="Créer un sondage interactif avec durée")
 @app_commands.describe(
     question="La question du sondage",
     option1="Option 1", option2="Option 2",
-    option3="Option 3 (optionnel)", option4="Option 4 (optionnel)", option5="Option 5 (optionnel)"
+    option3="Option 3 (optionnel)", option4="Option 4 (optionnel)", option5="Option 5 (optionnel)",
+    duree_minutes="Durée en minutes (0 = sans limite)"
 )
 async def poll_cmd(interaction: discord.Interaction, question: str, option1: str, option2: str,
-                   option3: str = None, option4: str = None, option5: str = None):
-    options = [o for o in [option1, option2, option3, option4, option5] if o]
+                   option3: str = None, option4: str = None, option5: str = None,
+                   duree_minutes: int = 0):
+    options  = [o for o in [option1, option2, option3, option4, option5] if o]
+    end_time = None
+    if duree_minutes > 0:
+        end_time = datetime.now(timezone.utc) + timedelta(minutes=duree_minutes)
+
     desc = f"**{question}**\n\n"
     for i, opt in enumerate(options):
         desc += f"{POLL_EMOJIS[i]} **{opt}**\n`░░░░░░░░░░` 0 vote (0%)\n\n"
     desc += f"{T.CHART} **0 vote au total**"
-    e = mk_embed(f"{T.POLL}  Sondage", desc, T.BLURPLE)
-    e.set_footer(text=f"Sondage par {interaction.user.display_name}")
+    if end_time:
+        desc += f"\n\n{T.CLOCK} Fin : <t:{int(end_time.timestamp())}:R>"
 
-    # Envoyer d'abord SANS view pour obtenir l'ID du message
+    e = mk_embed(f"{T.POLL}  Sondage", desc, T.BLURPLE)
+    e.set_footer(text=f"Sondage par {interaction.user.display_name}"
+                       + (f" • Durée : {duree_minutes} min" if duree_minutes > 0 else ""))
+
     await interaction.response.send_message(embed=e)
-    msg = await interaction.original_response()
+    msg    = await interaction.original_response()
     msg_id = str(msg.id)
 
-    # Stocker avec l'ID du message comme clé
-    bot.polls[msg_id] = {"question": question, "options": options, "votes": {}}
+    poll_data = {
+        "question":   question,
+        "options":    options,
+        "votes":      {},
+        "ended":      False,
+        "guild_id":   str(interaction.guild.id),
+        "channel_id": str(interaction.channel.id),
+    }
+    if end_time:
+        poll_data["end_time"] = end_time.isoformat()
 
-    # Créer la view avec l'ID du message et éditer
+    bot.polls[msg_id] = poll_data
     view = PollView(msg_id, options)
     await msg.edit(view=view)
 
@@ -1389,6 +1682,7 @@ async def top(interaction: discord.Interaction):
     app_commands.Choice(name="🎮 Gaming",                  value="gaming"),
     app_commands.Choice(name="🎭 Jeu de Rôle (RP)",       value="rp"),
     app_commands.Choice(name="📚 Éducation / Études",     value="education"),
+    app_commands.Choice(name="🎌 Anime / Manga",           value="anime"),
 ])
 @app_commands.default_permissions(administrator=True)
 async def setup(interaction: discord.Interaction, style: str = "communaute"):
@@ -1519,7 +1813,7 @@ if __name__ == "__main__":
     load_dotenv()
     token = os.environ.get('DISCORD_BOT_TOKEN')
     if token:
-        logger.info("⚡ Aegis V6 démarre...")
+        logger.info("⚡ Aegis V7 démarre...")
         bot.run(token)
     else:
         logger.error("❌ DISCORD_BOT_TOKEN manquant !")

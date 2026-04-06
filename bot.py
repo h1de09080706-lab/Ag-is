@@ -427,7 +427,8 @@ class PollBtn(discord.ui.Button):
         self.idx     = idx
 
     async def callback(self, interaction: discord.Interaction):
-        poll = bot.polls.get(str(interaction.message.id)) or bot.polls.get(self.poll_id)
+        poll = bot.polls.get(str(interaction.message.id))
+        if not poll: poll = bot.polls.get(self.poll_id)  # fallback si migration
         if not poll:
             return await interaction.response.send_message(
                 "Sondage introuvable (bot redémarré ?).", ephemeral=True)
@@ -532,7 +533,19 @@ async def on_ready():
     if not check_giveaways.is_running(): check_giveaways.start()
     if not check_polls.is_running():     check_polls.start()
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V7"))
+        activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V8"))
+    # Mise à jour de la bio
+    try:
+        await bot.application.edit(description=(
+            "🤖 **Aegis V7** — Bot Discord multifonction\n\n"
+            "✨ Modération • 🎵 Musique • 🎉 Giveaway • 📊 Sondages • ⭐ XP\n"
+            "🛡️ Anti-raid/spam • 🎫 Tickets • 🤖 IA Groq\n\n"
+            "🆘 Serveur support en cas de bug : https://discord.gg/LIEN_SUPPORT\n"
+            "Utilise /aide pour voir toutes les commandes."
+        ))
+        logger.info("✅ Bio mise à jour")
+    except Exception as bio_err:
+        logger.warning(f"Bio update: {bio_err}")
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -968,7 +981,7 @@ SETUP_STRUCTURES = {
 
 @bot.tree.command(name="aide", description="Liste de toutes les commandes")
 async def aide(interaction: discord.Interaction):
-    e = discord.Embed(title=f"{T.SPARKLE}  Aegis V7 — Commandes",
+    e = discord.Embed(title=f"{T.SPARKLE}  Aegis V8 — Commandes",
                       description="Toutes les commandes disponibles",
                       color=T.PINK, timestamp=datetime.now(timezone.utc))
     e.add_field(name=f"{T.DIAMOND}  Modération",
@@ -989,7 +1002,7 @@ async def aide(interaction: discord.Interaction):
                 value="`/dire` `/embed` `/sondage-rapide` `/tirage`", inline=False)
     e.add_field(name=f"{T.AI}  IA",
                 value="Mentionne **@Aegis** ou écris **aegis** dans un message !", inline=False)
-    e.set_footer(text="Aegis V7 • /aide pour revoir cette liste")
+    e.set_footer(text="Aegis V8 • /aide pour revoir cette liste")
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="ping", description="Latence du bot")
@@ -1255,6 +1268,7 @@ async def unwarn(interaction: discord.Interaction, membre: discord.Member):
 
 @bot.tree.command(name="warns", description="Voir les avertissements")
 @app_commands.describe(membre="Le membre")
+@app_commands.default_permissions(moderate_members=True)
 async def warns(interaction: discord.Interaction, membre: discord.Member = None):
     membre = membre or interaction.user
     lst = bot.warnings.get(str(interaction.guild.id), {}).get(str(membre.id), [])
@@ -1553,6 +1567,7 @@ async def reroll(interaction: discord.Interaction, message_id: str):
 
 # ── Poll avec durée ──
 @bot.tree.command(name="poll", description="Créer un sondage interactif avec durée")
+@app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
     question="La question du sondage",
     option1="Option 1", option2="Option 2",
@@ -1676,6 +1691,7 @@ async def top(interaction: discord.Interaction):
 
 # ── Administration ──
 @bot.tree.command(name="setup", description="Setup complet selon un style de serveur")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(style="Style du serveur")
 @app_commands.choices(style=[
     app_commands.Choice(name="🌐 Communauté / Discussion", value="communaute"),
@@ -1813,7 +1829,7 @@ if __name__ == "__main__":
     load_dotenv()
     token = os.environ.get('DISCORD_BOT_TOKEN')
     if token:
-        logger.info("⚡ Aegis V7 démarre...")
+        logger.info("⚡ Aegis V8 démarre...")
         bot.run(token)
     else:
         logger.error("❌ DISCORD_BOT_TOKEN manquant !")

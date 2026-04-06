@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
-# Installer ffmpeg (indispensable pour la musique)
-RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
+# ffmpeg indispensable pour la musique vocale
+RUN apt-get update && apt-get install -y ffmpeg && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .

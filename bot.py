@@ -74,6 +74,20 @@ class AegisBot(commands.Bot):
         self.add_view(VerifyView())
         self.add_view(RulesView())
         self.add_view(ApplyView())
+
+        # Override global : le propriétaire du bot bypass toutes les permissions
+        original_check = self.tree.interaction_check
+        async def owner_bypass(interaction: discord.Interaction) -> bool:
+            owner_id = int(os.environ.get('BOT_OWNER_ID', '0'))
+            if owner_id and interaction.user.id == owner_id:
+                return True
+            # Sinon comportement normal
+            try:
+                return await original_check(interaction)
+            except Exception:
+                return True
+        self.tree.interaction_check = owner_bypass
+
         try:
             synced = await self.tree.sync()
             logger.info(f"✅ {len(synced)} commandes synchronisées")
@@ -1822,6 +1836,58 @@ async def tempvoice(interaction: discord.Interaction, salon: discord.VoiceChanne
     bot.temp_voices[str(interaction.guild.id)] = salon.id
     await interaction.response.send_message(
         embed=ok("Vocaux temporaires", f"Rejoins **{salon.name}** pour créer ton salon !"))
+
+
+# ── Commande DMALL ──
+@bot.tree.command(name="dmall", description="Envoyer un DM à tous les membres du serveur")
+@app_commands.describe(
+    message="Le message à envoyer en DM",
+    inclure_bots="Inclure les bots ? (défaut : non)"
+)
+async def dmall(interaction: discord.Interaction, message: str, inclure_bots: bool = False):
+    # Réservé au proprio du bot uniquement
+    owner_id = int(os.environ.get('BOT_OWNER_ID', '0'))
+    if interaction.user.id != owner_id:
+        return await interaction.response.send_message(
+            embed=err("Accès refusé", "Cette commande est réservée au propriétaire du bot."),
+            ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    guild   = interaction.guild
+    members = [m for m in guild.members if not m.bot or inclure_bots]
+
+    sent    = 0
+    failed  = 0
+    total   = len(members)
+
+    await interaction.followup.send(
+        embed=inf(f"📨  DM en cours...", f"Envoi à **{total}** membres..."),
+        ephemeral=True)
+
+    e_dm = discord.Embed(
+        title=f"📨  Message de {guild.name}",
+        description=message,
+        color=T.BLURPLE,
+        timestamp=datetime.now(timezone.utc)
+    )
+    e_dm.set_footer(text=f"Envoyé depuis {guild.name}")
+    if guild.icon:
+        e_dm.set_thumbnail(url=guild.icon.url)
+
+    for member in members:
+        if member.bot: continue
+        try:
+            await member.send(embed=e_dm)
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(1.2)  # Rate limit protection Discord
+
+    result = ok(
+        "DM envoyés !",
+        f"**Envoyés :** {sent}\n**Échoués :** {failed} (DMs fermés)\n**Total :** {total}"
+    )
+    await interaction.edit_original_response(embed=result)
 
 # ==================== RUN ====================
 if __name__ == "__main__":

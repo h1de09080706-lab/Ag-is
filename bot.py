@@ -442,26 +442,30 @@ class PollBtn(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         poll = bot.polls.get(str(interaction.message.id))
-        if not poll: poll = bot.polls.get(self.poll_id)  # fallback si migration
+        if not poll: poll = bot.polls.get(self.poll_id)
         if not poll:
             return await interaction.response.send_message(
                 "Sondage introuvable (bot redémarré ?).", ephemeral=True)
         if poll.get("ended"):
             return await interaction.response.send_message("Ce sondage est terminé.", ephemeral=True)
 
-        uid   = str(interaction.user.id)   # ← str pour cohérence
+        uid   = str(interaction.user.id)
         votes = poll.setdefault("votes", {})
         if votes.get(uid) == self.idx:
             del votes[uid]
-            await interaction.response.send_message(f"{T.CROSS} Vote retiré.", ephemeral=True)
+            msg = f"{T.CROSS} Vote retiré."
         else:
             votes[uid] = self.idx
-            await interaction.response.send_message(
-                f"{T.CHECK} Voté pour **{poll['options'][self.idx]}** !", ephemeral=True)
+            msg = f"{T.CHECK} Voté pour **{poll['options'][self.idx]}** !"
+
+        # ✅ Répondre EN PREMIER (obligatoire dans les 3s sous peine d'échec)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+        # Puis mettre à jour l'embed (peut prendre plus de temps)
         try:
             await _update_poll_embed(interaction.message, poll)
         except Exception as e:
-            logger.error(f"Poll update error: {e}", exc_info=True)
+            logger.error(f"Poll update: {e}")
 
 async def _update_poll_embed(message, poll):
     counts = [0] * len(poll["options"])

@@ -449,7 +449,7 @@ class PollBtn(discord.ui.Button):
         if poll.get("ended"):
             return await interaction.response.send_message("Ce sondage est terminé.", ephemeral=True)
 
-        uid   = interaction.user.id
+        uid   = str(interaction.user.id)   # ← str pour cohérence
         votes = poll.setdefault("votes", {})
         if votes.get(uid) == self.idx:
             del votes[uid]
@@ -461,12 +461,15 @@ class PollBtn(discord.ui.Button):
         try:
             await _update_poll_embed(interaction.message, poll)
         except Exception as e:
-            logger.error(f"Poll update: {e}")
+            logger.error(f"Poll update error: {e}", exc_info=True)
 
 async def _update_poll_embed(message, poll):
     counts = [0] * len(poll["options"])
     for v in poll.get("votes", {}).values():
-        if 0 <= v < len(counts): counts[v] += 1
+        try:
+            v = int(v)
+            if 0 <= v < len(counts): counts[v] += 1
+        except (ValueError, TypeError): pass
     total = sum(counts)
     desc  = f"**{poll['question']}**\n\n"
     for i, opt in enumerate(poll["options"]):

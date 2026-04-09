@@ -64,10 +64,6 @@ class AegisBot(commands.Bot):
         self.music_queues:     Dict = {}
         self.now_playing:      Dict = {}
         self.ai_cooldown:      Dict = {}
-        # Anti-nuke : {guild_id: {user_id: {action: count, last_reset: datetime}}}
-        self.nuke_tracker:     Dict = {}
-        # Config anti-nuke : {guild_id: {enabled, threshold, action, whitelist}}
-        self.antinuke_config:  Dict = {}
 
     async def setup_hook(self):
         self.add_view(TicketView())
@@ -772,103 +768,6 @@ SETUPS={
         "🎫 Tickets":([],[])}},
 }
 
-
-# ==================== ANTI-NUKE ====================
-async def _nuke_check(guild: discord.Guild, user_id: int, action: str) -> bool:
-    """Vérifie si un utilisateur dépasse le seuil d'actions dangereuses."""
-    gid = str(guild.id)
-    cfg = bot.antinuke_config.get(gid, {"enabled": False, "threshold": 5, "action": "kick", "whitelist": []})
-    if not cfg.get("enabled", False): return False
-
-    # Whitelist : owner + whitelist perso
-    if user_id == guild.owner_id: return False
-    if user_id in cfg.get("whitelist", []): return False
-    if is_owner(user_id): return False
-
-    now = datetime.now(timezone.utc)
-    tracker = bot.nuke_tracker.setdefault(gid, {})
-    user_data = tracker.setdefault(str(user_id), {})
-
-    # Reset toutes les 10 secondes
-    last = user_data.get("last_reset")
-    if not last or (now - last).total_seconds() > 10:
-        user_data.clear()
-        user_data["last_reset"] = now
-
-    user_data[action] = user_data.get(action, 0) + 1
-    total = sum(v for k, v in user_data.items() if k not in ("last_reset",))
-
-    threshold = cfg.get("threshold", 5)
-    if total >= threshold:
-        # Sanctionner
-        member = guild.get_member(user_id)
-        if member:
-            try:
-                act = cfg.get("action", "kick")
-                reason = f"Anti-nuke : {total} actions dangereuses en 10s ({action})"
-                if act == "ban":
-                    await guild.ban(member, reason=reason, delete_message_days=0)
-                else:
-                    await guild.kick(member, reason=reason)
-                # Log
-                await log_action(guild, "🚨 Anti-Nuke déclenché",
-                    f"**Membre sanctionné :** {member.mention} (`{member}`)
-"
-                    f"**Action déclenchante :** {action}
-"
-                    f"**Total actions :** {total} en 10s
-"
-                    f"**Sanction :** {act}", T.RED)
-                # Reset le tracker pour éviter le double-kick
-                tracker.pop(str(user_id), None)
-                return True
-            except Exception as e:
-                logger.error(f"Anti-nuke sanction: {e}")
-    return False
-
-@bot.event
-async def on_member_ban(guild: discord.Guild, user: discord.User):
-    # Chercher qui a banni
-    try:
-        await asyncio.sleep(0.5)  # Laisser l'audit log se mettre à jour
-        async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
-            if entry.target.id == user.id:
-                await _nuke_check(guild, entry.user.id, "ban")
-                break
-    except Exception: pass
-
-@bot.event
-async def on_member_remove_nuke(guild: discord.Guild, user: discord.User):
-    # Géré via on_audit_log pour les kicks
-    pass
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    try:
-        await asyncio.sleep(0.5)
-        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-            await _nuke_check(channel.guild, entry.user.id, "channel_delete")
-            break
-    except Exception: pass
-
-@bot.event
-async def on_guild_role_delete(role):
-    try:
-        await asyncio.sleep(0.5)
-        async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
-            await _nuke_check(role.guild, entry.user.id, "role_delete")
-            break
-    except Exception: pass
-
-@bot.event
-async def on_webhooks_update(channel):
-    try:
-        await asyncio.sleep(0.5)
-        async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.webhook_create):
-            await _nuke_check(channel.guild, entry.user.id, "webhook_create")
-            break
-    except Exception: pass
-
 # ==================== COMMANDES ====================
 
 @bot.tree.command(name="aide",description="Liste de toutes les commandes")
@@ -879,7 +778,7 @@ async def aide(interaction: discord.Interaction):
     e.add_field(name=f"{T.CHANNEL}  Salons",value="`/creersalon` `/creervoice` `/supprimersalon` `/lock` `/unlock` `/slowmode`",inline=False)
     e.add_field(name=f"{T.ROLE}  Rôles",value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`",inline=False)
     e.add_field(name=f"{T.GEAR}  Systèmes",value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`",inline=False)
-    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice` `/autorole`",inline=False)
+    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/setup` `/tempvoice` `/autorole`",inline=False)
     e.add_field(name=f"{T.MUSIC}  Musique",value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`",inline=False)
     e.add_field(name=f"{T.XP}  XP & Stats",value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`",inline=False)
     e.add_field(name=f"{T.MEGA}  Divers",value="`/dire` `/embed` `/sondage-rapide` `/tirage`",inline=False)
@@ -1531,74 +1430,6 @@ async def antispam(interaction: discord.Interaction,activer: bool=True,messages:
 async def tempvoice(interaction: discord.Interaction,salon: discord.VoiceChannel):
     bot.temp_voices[str(interaction.guild.id)]=salon.id
     await interaction.response.send_message(embed=ok("Vocaux temporaires",f"Rejoins **{salon.name}** pour créer ton salon !"))
-
-
-@bot.tree.command(name="antinuke", description="Configurer la protection anti-nuke")
-@app_commands.describe(
-    activer="Activer l'anti-nuke",
-    seuil="Nombre d'actions max en 10 secondes avant sanction",
-    action="kick ou ban",
-    ajouter_whitelist="ID d'un membre à mettre en whitelist (ne sera jamais sanctionné)",
-    retirer_whitelist="ID d'un membre à retirer de la whitelist"
-)
-@app_commands.default_permissions(administrator=True)
-async def antinuke(interaction: discord.Interaction,
-                   activer: bool = True,
-                   seuil: int = 5,
-                   action: str = "kick",
-                   ajouter_whitelist: str = None,
-                   retirer_whitelist: str = None):
-    gid = str(interaction.guild.id)
-    cfg = bot.antinuke_config.setdefault(gid, {
-        "enabled": False, "threshold": 5, "action": "kick", "whitelist": []
-    })
-    cfg["enabled"]   = activer
-    cfg["threshold"] = max(1, seuil)
-    cfg["action"]    = action if action in ("kick", "ban") else "kick"
-
-    # Gestion whitelist
-    wl = cfg.setdefault("whitelist", [])
-    if ajouter_whitelist:
-        try:
-            uid = int(ajouter_whitelist)
-            if uid not in wl: wl.append(uid)
-        except ValueError:
-            pass
-    if retirer_whitelist:
-        try:
-            uid = int(retirer_whitelist)
-            if uid in wl: wl.remove(uid)
-        except ValueError:
-            pass
-
-    # Afficher la whitelist
-    wl_display = []
-    for uid in wl:
-        m = interaction.guild.get_member(uid)
-        wl_display.append(m.mention if m else f"`{uid}`")
-
-    e = mke(f"🚨  Anti-Nuke",
-            f"**Statut :** {'✅ Activé' if activer else '❌ Désactivé'}
-"
-            f"**Seuil :** {seuil} actions dangereuses / 10s
-"
-            f"**Sanction :** {cfg['action']}
-"
-            f"**Whitelist :** {', '.join(wl_display) if wl_display else 'Aucun'}
-
-"
-            f"**Actions surveillées :**
-"
-            f"• Bans en masse
-"
-            f"• Suppression de salons
-"
-            f"• Suppression de rôles
-"
-            f"• Création de webhooks suspects",
-            T.RED)
-    e.set_footer(text="⚠️ Ajoute les admins de confiance en whitelist !")
-    await interaction.response.send_message(embed=e)
 
 # ── DM All (owner uniquement, vérifié manuellement) ──
 @bot.tree.command(name="dmall",description="Envoyer un DM à tous les membres [Owner uniquement]")

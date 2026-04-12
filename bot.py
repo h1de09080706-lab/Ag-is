@@ -15,6 +15,7 @@ BOT_OWNER_ID = int(os.environ.get('BOT_OWNER_ID', '0'))
 class T:
     PINK=0xFF1493; GREEN=0x57F287; RED=0xED4245; ORANGE=0xFF6600
     GOLD=0xFFD700; BLURPLE=0x5865F2; PURPLE=0x9B59B6; TEAL=0x1ABC9C
+
     SPARKLE="✨"; LIGHTNING="⚡"; STAR="🌟"; DIAMOND="💎"; CROWN="👑"
     CRYSTAL="💠"; TICKET="🎫"; LOCK="🔐"; BAN="⛔"; KICK="👢"
     WARN="⚠️"; SHIELD="🛡️"; CHECK="✅"; CROSS="❌"; GEAR="⚙️"
@@ -26,14 +27,16 @@ class T:
     LINE="━━━━━━━━━━━━━━━━━━━━━━━━"
 
 def mke(title, desc=None, color=None, footer=None):
-    e = discord.Embed(title=title, description=desc, color=color or T.PINK, timestamp=datetime.now(timezone.utc))
+    e = discord.Embed(title=title, description=desc,
+                      color=color or T.PINK, timestamp=datetime.now(timezone.utc))
     if footer: e.set_footer(text=footer)
     return e
 
 def ok(t, d=None):  return mke(f"{T.CHECK}  {t}", d, T.GREEN)
 def er(t, d=None):  return mke(f"{T.CROSS}  {t}", d, T.RED)
 def inf(t, d=None): return mke(f"{T.INFO}  {t}",  d, T.BLURPLE)
-def is_owner(uid):  return BOT_OWNER_ID != 0 and uid == BOT_OWNER_ID
+
+def is_owner(uid): return BOT_OWNER_ID != 0 and uid == BOT_OWNER_ID
 
 # ==================== BOT ====================
 intents = discord.Intents.all()
@@ -41,29 +44,29 @@ intents = discord.Intents.all()
 class AegisBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!aegis_', intents=intents, help_command=None)
-        self.giveaways:       Dict = {}
-        self.temp_voices:     Dict = {}
-        self.auto_roles:      Dict = {}
-        self.logs_channels:   Dict = {}
-        self.arrivee_channels:Dict = {}
-        self.depart_channels: Dict = {}
-        self.anti_raid_cache: Dict = {}
-        self.backups:         Dict = {}
-        self.ticket_configs:  Dict = {}
-        self.raid_protection: Dict = {}
-        self.verif_roles:     Dict = {}
-        self.antispam_config: Dict = {}
-        self.warnings:        Dict = {}
-        self.msg_cache             = defaultdict(list)
-        self.xp_data:         Dict = {}
-        self.xp_cooldown:     Dict = {}
-        self.polls:           Dict = {}
-        self.vc_pool:         Dict = {}
-        self.music_queues:    Dict = {}
-        self.now_playing:     Dict = {}
-        self.ai_cooldown:     Dict = {}
-        self.nuke_tracker:    Dict = {}
-        self.antinuke_config: Dict = {}
+        self.giveaways:        Dict = {}
+        self.temp_voices:      Dict = {}
+        self.auto_roles:       Dict = {}
+        self.logs_channels:    Dict = {}
+        self.arrivee_channels: Dict = {}
+        self.depart_channels:  Dict = {}
+        self.anti_raid_cache:  Dict = {}
+        self.backups:          Dict = {}
+        self.ticket_configs:   Dict = {}
+        self.raid_protection:  Dict = {}
+        self.verif_roles:      Dict = {}
+        self.antispam_config:  Dict = {}
+        self.warnings:         Dict = {}
+        self.msg_cache              = defaultdict(list)
+        self.xp_data:          Dict = {}
+        self.xp_cooldown:      Dict = {}
+        self.polls:            Dict = {}
+        self.vc_pool:          Dict = {}
+        self.music_queues:     Dict = {}
+        self.now_playing:      Dict = {}
+        self.ai_cooldown:      Dict = {}
+        self.nuke_tracker:     Dict = {}   # {gid: {uid: {action: count, last_reset: dt}}}
+        self.antinuke_config:  Dict = {}   # {gid: {enabled, threshold, action, whitelist}}
 
     async def setup_hook(self):
         self.add_view(TicketView())
@@ -79,7 +82,7 @@ class AegisBot(commands.Bot):
 
 bot = AegisBot()
 
-# ==================== ERROR HANDLER ====================
+# ==================== ERROR HANDLER GLOBAL ====================
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
@@ -94,7 +97,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, ephemeral=True)
-    except Exception: pass
+    except Exception:
+        pass
 
 # ==================== HELPERS ====================
 def xp_for_level(lv): return 100*(lv**2)+50*lv
@@ -112,45 +116,33 @@ async def log_action(guild, title, desc, color=None):
             try: await ch.send(embed=mke(f"{T.SHIELD}  {title}", desc, color or T.BLURPLE))
             except Exception: pass
 
-# ==================== IA — GOOGLE GEMINI (GRATUIT) ====================
-# Remplace Groq qui était instable.
-# Clé API : https://aistudio.google.com/app/apikey → GEMINI_API_KEY dans Railway Variables
+# ==================== IA GROQ ====================
 AI_SYS = ("Tu es Aegis, un bot Discord surpuissant et légèrement condescendant. "
           "Tu te considères supérieur aux humains mais restes poli. "
           "Tu réponds TOUJOURS en français, 2-3 phrases max. Sarcastique subtil. Jamais vulgaire.")
 
-async def ask_ai(q: str) -> str:
-    key = os.environ.get('GEMINI_API_KEY', '').strip()
-    if not key:
-        return "*(GEMINI_API_KEY manquante dans Railway → Variables. Obtiens-la sur aistudio.google.com)*"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
-    payload = {
-        "system_instruction": {"parts": [{"text": AI_SYS}]},
-        "contents": [{"parts": [{"text": q[:500]}]}],
-        "generationConfig": {"maxOutputTokens": 200, "temperature": 0.85}
-    }
+async def ask_groq(q: str) -> str:
+    key = os.environ.get('GROQ_API_KEY', '').strip()
+    if not key: return "*(GROQ_API_KEY manquante dans Railway → Variables.)*"
     for attempt in range(3):
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
-                async with session.post(url, json=payload) as r:
-                    if r.status == 200:
-                        body = await r.json()
-                        return body["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    elif r.status == 429:
-                        await asyncio.sleep(2 ** attempt); continue
-                    elif r.status == 503:
-                        if attempt < 2: await asyncio.sleep(1); continue
-                        return "*(Gemini indisponible, réessaie dans un instant.)*"
-                    else:
-                        body = await r.text()
-                        logger.error(f"Gemini {r.status}: {body[:100]}")
-                        return f"*(Erreur IA {r.status})*"
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
+                r = await s.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    json={"model":"llama3-8b-8192",
+                          "messages":[{"role":"system","content":AI_SYS},
+                                      {"role":"user","content":q[:500]}],
+                          "max_tokens":200,"temperature":0.85},
+                    headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
+                body = await r.json()
+                if r.status == 200: return body["choices"][0]["message"]["content"].strip()
+                elif r.status == 429: await asyncio.sleep(2**attempt); continue
+                else: return f"*(Erreur Groq {r.status})*"
         except asyncio.TimeoutError:
             if attempt < 2: await asyncio.sleep(1); continue
             return "*(Délai dépassé.)*"
-        except Exception as e:
-            return f"*(Erreur: {str(e)[:40]})*"
-    return "*(IA inaccessible.)*"
+        except Exception as e: return f"*(Erreur: {str(e)[:40]})*"
+    return "*(Groq inaccessible.)*"
 
 # ==================== MUSIQUE ====================
 FFMPEG = {'before_options':'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5','options':'-vn'}
@@ -257,8 +249,11 @@ async def _nuke_check(guild: discord.Guild, user_id: int, action: str) -> bool:
                 reason = f"Anti-nuke : {total} actions dangereuses en 10s"
                 if act=="ban": await guild.ban(member, reason=reason, delete_message_days=0)
                 else:          await guild.kick(member, reason=reason)
-                await log_action(guild, f"{T.NUKE} Anti-Nuke déclenché",
-                                 f"**Membre :** {member.mention}\n**Action :** {action}\n**Total :** {total}/10s\n**Sanction :** {act}", T.RED)
+                desc = (f"**Membre :** {member.mention} (`{member}`)\n"
+                        f"**Action :** {action}\n"
+                        f"**Total :** {total} actions / 10s\n"
+                        f"**Sanction :** {act}")
+                await log_action(guild, f"{T.NUKE} Anti-Nuke déclenché", desc, T.RED)
                 tracker.pop(str(user_id),None)
                 return True
             except Exception as e: logger.error(f"Antinuke: {e}")
@@ -279,8 +274,6 @@ class GiveawayBtn(discord.ui.Button):
         uid=interaction.user.id; p=g.setdefault("participants",[])
         if uid in p: p.remove(uid); msg=f"{T.CROSS} Retiré."
         else: p.append(uid); msg=f"{T.CHECK} Tu participes ! ({len(p)})"
-        # Répondre AVANT d'éditer
-        await interaction.response.send_message(msg,ephemeral=True)
         try:
             em=interaction.message.embeds[0]
             for i,f in enumerate(em.fields):
@@ -288,6 +281,7 @@ class GiveawayBtn(discord.ui.Button):
                     em.set_field_at(i,name=f"{T.STAR} Participants",value=f"**{len(p)}**",inline=True); break
             await interaction.message.edit(embed=em)
         except Exception: pass
+        await interaction.response.send_message(msg,ephemeral=True)
 
 @tasks.loop(minutes=1)
 async def check_giveaways():
@@ -352,7 +346,6 @@ class PollBtn(discord.ui.Button):
         uid=str(interaction.user.id); votes=poll.setdefault("votes",{})
         if votes.get(uid)==self.idx: del votes[uid]; msg=f"{T.CROSS} Vote retiré."
         else: votes[uid]=self.idx; msg=f"{T.CHECK} Voté pour **{poll['options'][self.idx]}** !"
-        # Répondre IMMÉDIATEMENT avant d'éditer l'embed
         await interaction.response.send_message(msg,ephemeral=True)
         try: await _poll_embed(interaction.message,poll)
         except Exception as e: logger.error(f"Poll embed: {e}")
@@ -432,35 +425,31 @@ async def on_ready():
     else: logger.warning("⚠️ BOT_OWNER_ID non configuré")
     if not check_giveaways.is_running(): check_giveaways.start()
     if not check_polls.is_running():     check_polls.start()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V1.11"))
+    await bot.change_presence(
+        activity=discord.Activity(type=discord.ActivityType.watching, name="✨ /aide | Aegis V1.10"))
     try:
         await bot.application.edit(description=(
-            "🤖 Aegis V1.11 — Bot Discord multifonction\n\n"
+            "🤖 Aegis V1.10 — Bot Discord multifonction\n\n"
             "✨ Modération • 🎵 Musique • 🎉 Giveaway • 📊 Sondages • ⭐ XP\n"
-            "🛡️ Anti-raid/spam/nuke • 🎫 Tickets • 🤖 IA Gemini\n\n"
+            "🛡️ Anti-raid/spam/nuke • 🎫 Tickets • 🤖 IA Groq\n\n"
+            "🆘 Support : https://discord.gg/LIEN_SUPPORT\n"
             "/aide pour toutes les commandes."
         ))
     except Exception as e: logger.warning(f"Bio: {e}")
 
-# ══════════════════════════════════════════════════════════════════
-# FIX DOUBLE MESSAGE — cache propre basé sur l'ID du message
-# Railway redémarre parfois avec 2 instances brièvement → doublon.
-# On déduplication par message.id avec une fenêtre de 10 secondes.
-# ══════════════════════════════════════════════════════════════════
-_seen_messages: Dict = {}   # {message_id: timestamp}
-
-def _is_duplicate(msg_id: int) -> bool:
-    now = datetime.now(timezone.utc).timestamp()
-    # Nettoyer les entrées > 10s
-    expired = [k for k,v in _seen_messages.items() if now - v > 10]
-    for k in expired: del _seen_messages[k]
-    if msg_id in _seen_messages:
-        return True
-    _seen_messages[msg_id] = now
-    return False
+# Cache anti-doublon membres
+_processed_joins:   set = set()
+_processed_removes: set = set()
 
 @bot.event
 async def on_member_join(member:discord.Member):
+    key = f"{member.guild.id}-{member.id}-{int(datetime.now(timezone.utc).timestamp()//5)}"
+    if key in _processed_joins: return
+    _processed_joins.add(key)
+    if len(_processed_joins) > 500:
+        # Vider les clés expirées (> 10s)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        _processed_joins.clear()
     gid=str(member.guild.id); now=datetime.now(timezone.utc)
     bot.anti_raid_cache.setdefault(gid,[]).append(now)
     bot.anti_raid_cache[gid]=[t for t in bot.anti_raid_cache[gid] if (now-t).total_seconds()<10]
@@ -472,10 +461,10 @@ async def on_member_join(member:discord.Member):
         except Exception: pass
         return
     if gid in bot.auto_roles:
-        role_ids=bot.auto_roles[gid]
-        if isinstance(role_ids,int): role_ids=[role_ids]
+        role_ids = bot.auto_roles[gid]
+        if isinstance(role_ids, int): role_ids = [role_ids]  # compat ancienne version
         for rid in role_ids:
-            role=member.guild.get_role(rid)
+            role = member.guild.get_role(rid)
             if role:
                 try: await member.add_roles(role)
                 except Exception: pass
@@ -500,6 +489,11 @@ async def on_member_join(member:discord.Member):
 
 @bot.event
 async def on_member_remove(member:discord.Member):
+    key = f"{member.guild.id}-{member.id}-{int(datetime.now(timezone.utc).timestamp()//5)}"
+    if key in _processed_removes: return
+    _processed_removes.add(key)
+    if len(_processed_removes) > 500:
+        _processed_removes.clear()
     gid=str(member.guild.id)
     if gid in bot.depart_channels:
         ch=member.guild.get_channel(bot.depart_channels[gid])
@@ -558,21 +552,26 @@ async def on_guild_role_delete(role):
             await _nuke_check(role.guild,entry.user.id,"role_delete"); break
     except Exception: pass
 
+# Cache anti-doublon (deque FIFO avec taille max)
+_processed_messages: deque = deque(maxlen=2000)
+_processed_msg_set:  set   = set()
+
 @bot.event
 async def on_message(message:discord.Message):
     if message.author.bot: return
-
-    # ══ ANTI-DOUBLON — fix double message Railway ══
-    # Si on a déjà traité ce message dans les 10 dernières secondes, on ignore
-    if _is_duplicate(message.id): return
-
+    # Guard anti-doublon Railway double-instance
+    if message.id in _processed_msg_set: return
+    _processed_msg_set.add(message.id)
+    _processed_messages.append(message.id)
+    # Nettoyer le set quand la deque retire des anciens éléments
+    while len(_processed_msg_set) > 2000:
+        try: _processed_msg_set.discard(_processed_messages[0])
+        except Exception: break
     if message.guild:
         if await check_spam(message): return
         await add_xp(message)
-
-    bot_mentioned = bot.user in (message.mentions or [])
-    name_mentioned = "aegis" in message.content.lower()
-
+    bot_mentioned=bot.user in (message.mentions or [])
+    name_mentioned="aegis" in message.content.lower()
     if message.guild and (bot_mentioned or name_mentioned):
         uid=message.author.id; now=datetime.now(timezone.utc)
         last=bot.ai_cooldown.get(uid)
@@ -584,11 +583,10 @@ async def on_message(message:discord.Message):
         elif name_mentioned: q=re.sub(r'(?i)\baegis\b[,\s]*','',q,count=1).strip()
         if len(q)<2: q="Bonjour !"
         async with message.channel.typing():
-            rep=await ask_ai(q)
+            rep=await ask_groq(q)
         try: await message.reply(f"{T.AI} {rep}")
         except Exception: pass
         return
-
     await bot.process_commands(message)
 
 # ==================== VIEWS ====================
@@ -651,11 +649,10 @@ class VerifyView(discord.ui.View):
         if role in interaction.user.roles:
             return await interaction.response.send_message(f"{T.CHECK} Déjà vérifié !",ephemeral=True)
         try:
-            await interaction.response.defer(ephemeral=True)
             await interaction.user.add_roles(role)
-            await interaction.followup.send(f"{T.CHECK} Vérifié ! {role.mention}",ephemeral=True)
+            await interaction.response.send_message(f"{T.CHECK} Vérifié ! {role.mention}",ephemeral=True)
         except Exception:
-            await interaction.followup.send(f"{T.CROSS} Erreur permissions.",ephemeral=True)
+            await interaction.response.send_message(f"{T.CROSS} Erreur permissions.",ephemeral=True)
 
 class RulesView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -669,11 +666,10 @@ class RulesView(discord.ui.View):
                 if role: break
         if role:
             try:
-                await interaction.response.defer(ephemeral=True)
                 await interaction.user.add_roles(role)
-                await interaction.followup.send(f"{T.CHECK} Accepté ! {role.mention}",ephemeral=True)
+                await interaction.response.send_message(f"{T.CHECK} Accepté ! {role.mention}",ephemeral=True)
             except Exception:
-                await interaction.followup.send(f"{T.WARN} Erreur permissions.",ephemeral=True)
+                await interaction.response.send_message(f"{T.WARN} Erreur permissions.",ephemeral=True)
         else: await interaction.response.send_message(f"{T.CHECK} Règlement accepté !",ephemeral=True)
 
 class ApplyView(discord.ui.View):
@@ -702,7 +698,6 @@ class RoleMenu(discord.ui.Select):
         opts=[discord.SelectOption(label=r.name,value=str(r.id),emoji="🎭") for r in roles[:25]]
         super().__init__(placeholder="Choisis tes rôles...",min_values=0,max_values=len(opts),options=opts,custom_id="role_select")
     async def callback(self,interaction:discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         selected=[int(v) for v in self.values]; added,removed=[],[]
         for opt in self.options:
             role=interaction.guild.get_role(int(opt.value))
@@ -714,7 +709,7 @@ class RoleMenu(discord.ui.Select):
         parts=[]
         if added:   parts.append(f"{T.CHECK} Ajouté : {', '.join(added)}")
         if removed: parts.append(f"{T.CROSS} Retiré : {', '.join(removed)}")
-        await interaction.followup.send("\n".join(parts) or "Aucun changement",ephemeral=True)
+        await interaction.response.send_message("\n".join(parts) or "Aucun changement",ephemeral=True)
 
 class RoleMenuView(discord.ui.View):
     def __init__(self,roles): super().__init__(timeout=None); self.add_item(RoleMenu(roles))
@@ -725,20 +720,18 @@ class SuggestionView(discord.ui.View):
     async def approve(self,interaction:discord.Interaction,button:discord.ui.Button):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("Permission refusée.",ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
         e=interaction.message.embeds[0]; e.color=T.GREEN; e.title="✅  Suggestion approuvée"
         e.set_footer(text=f"Approuvé par {interaction.user.display_name}")
         await interaction.message.edit(embed=e,view=None)
-        await interaction.followup.send("Approuvée !",ephemeral=True)
+        await interaction.response.send_message("Approuvée !",ephemeral=True)
     @discord.ui.button(label="👎 Refuser",style=discord.ButtonStyle.danger,custom_id="suggest_refuse")
     async def refuse(self,interaction:discord.Interaction,button:discord.ui.Button):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("Permission refusée.",ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
         e=interaction.message.embeds[0]; e.color=T.RED; e.title="❌  Suggestion refusée"
         e.set_footer(text=f"Refusé par {interaction.user.display_name}")
         await interaction.message.edit(embed=e,view=None)
-        await interaction.followup.send("Refusée.",ephemeral=True)
+        await interaction.response.send_message("Refusée.",ephemeral=True)
 
 class ReglementModal(discord.ui.Modal,title="✍️ Règlement personnalisé"):
     contenu=discord.ui.TextInput(label="Ton règlement",style=discord.TextStyle.paragraph,placeholder="Écris les règles ici...",max_length=2000)
@@ -819,18 +812,18 @@ SETUPS={
 
 @bot.tree.command(name="aide",description="Liste de toutes les commandes")
 async def aide(interaction:discord.Interaction):
-    e=discord.Embed(title=f"{T.SPARKLE}  Aegis V1.11 — Commandes",description="Toutes les commandes disponibles",
+    e=discord.Embed(title=f"{T.SPARKLE}  Aegis V1.10 — Commandes",description="Toutes les commandes disponibles",
                     color=T.PINK,timestamp=datetime.now(timezone.utc))
     e.add_field(name=f"{T.DIAMOND}  Modération",value="`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn` `/unwarn` `/warns` `/rename` `/purge`",inline=False)
     e.add_field(name=f"{T.CHANNEL}  Salons",value="`/creersalon` `/creervoice` `/supprimersalon` `/lock` `/unlock` `/slowmode`",inline=False)
     e.add_field(name=f"{T.ROLE}  Rôles",value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`",inline=False)
     e.add_field(name=f"{T.GEAR}  Systèmes",value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`",inline=False)
-    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice`",inline=False)
+    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice` `/autorole`",inline=False)
     e.add_field(name=f"{T.MUSIC}  Musique",value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`",inline=False)
     e.add_field(name=f"{T.XP}  XP & Stats",value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`",inline=False)
     e.add_field(name=f"{T.MEGA}  Divers",value="`/dire` `/embed` `/sondage-rapide` `/tirage`",inline=False)
-    e.add_field(name=f"{T.AI}  IA (Gemini)",value="Mentionne **@Aegis** ou écris **aegis** dans un message !",inline=False)
-    e.set_footer(text="Aegis V1.11 — IA Google Gemini")
+    e.add_field(name=f"{T.AI}  IA",value="Mentionne **@Aegis** ou écris **aegis** dans un message !",inline=False)
+    e.set_footer(text="Aegis V1.10 • https://discord.gg/LIEN_SUPPORT")
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="ping",description="Latence du bot")
@@ -842,31 +835,29 @@ async def ping(interaction:discord.Interaction):
 @app_commands.describe(message="Le message",salon="Salon cible (vide = actuel)")
 @app_commands.default_permissions(manage_messages=True)
 async def dire(interaction:discord.Interaction,message:str,salon:discord.TextChannel=None):
-    await interaction.response.defer(ephemeral=True)
     target=salon or interaction.channel
     await target.send(message)
-    await interaction.followup.send(embed=ok("Envoyé",f"Dans {target.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Envoyé",f"Dans {target.mention}"),ephemeral=True)
 
 @bot.tree.command(name="embed",description="Envoyer un embed personnalisé")
 @app_commands.describe(titre="Titre",contenu="Contenu",couleur="Couleur hex",salon="Salon cible")
 @app_commands.default_permissions(manage_messages=True)
 async def embed_cmd(interaction:discord.Interaction,titre:str,contenu:str,couleur:str="#5865F2",salon:discord.TextChannel=None):
-    await interaction.response.defer(ephemeral=True)
     target=salon or interaction.channel
     try: color=int(couleur.replace("#",""),16)
     except: color=T.BLURPLE
     e=discord.Embed(title=titre,description=contenu,color=color,timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Par {interaction.user.display_name}")
     await target.send(embed=e)
-    await interaction.followup.send(embed=ok("Embed envoyé !",f"Dans {target.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Embed envoyé !",f"Dans {target.mention}"),ephemeral=True)
 
 @bot.tree.command(name="sondage-rapide",description="Sondage Oui/Non rapide")
 @app_commands.describe(question="Ta question")
 async def sondage_rapide(interaction:discord.Interaction,question:str):
-    await interaction.response.defer()
     e=mke(f"{T.POLL}  Sondage rapide",f"**{question}**\n\nRéagis pour voter !",T.BLURPLE)
     e.set_footer(text=f"Posé par {interaction.user.display_name}")
-    msg=await interaction.followup.send(embed=e,wait=True)
+    await interaction.response.send_message(embed=e)
+    msg=await interaction.original_response()
     await msg.add_reaction("👍"); await msg.add_reaction("👎"); await msg.add_reaction("🤷")
 
 @bot.tree.command(name="tirage",description="Tirage au sort parmi des options")
@@ -896,14 +887,13 @@ async def suggestion(interaction:discord.Interaction,texte:str,salon:discord.Tex
             if salon: break
     if not salon:
         return await interaction.response.send_message(embed=er("Salon introuvable","Crée un salon `💡・suggestions`."),ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
     e=mke("💡  Nouvelle suggestion",texte,T.GOLD)
     e.add_field(name="Proposé par",value=interaction.user.mention,inline=True)
     e.add_field(name="Statut",value="En attente ⏳",inline=True)
     e.set_thumbnail(url=interaction.user.display_avatar.url)
     msg=await salon.send(embed=e,view=SuggestionView())
     await msg.add_reaction("👍"); await msg.add_reaction("👎")
-    await interaction.followup.send(embed=ok("Suggestion envoyée !",f"Dans {salon.mention}."),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Suggestion envoyée !",f"Dans {salon.mention}."),ephemeral=True)
 
 # ── Musique ──
 @bot.tree.command(name="play",description="Jouer une musique depuis YouTube")
@@ -953,13 +943,12 @@ async def skip(interaction:discord.Interaction):
 
 @bot.tree.command(name="stop",description="Arrêter et déconnecter")
 async def stop(interaction:discord.Interaction):
-    await interaction.response.defer()
     gid=str(interaction.guild.id); vc=bot.vc_pool.get(gid)
     if vc:
         bot.music_queues[gid]=[]; bot.now_playing[gid]=None
         await vc.disconnect(); bot.vc_pool.pop(gid,None)
-        await interaction.followup.send(embed=ok(f"{T.STOP}  Arrêté","Déconnecté."))
-    else: await interaction.followup.send(embed=er("Bot pas dans un vocal"),ephemeral=True)
+        await interaction.response.send_message(embed=ok(f"{T.STOP}  Arrêté","Déconnecté."))
+    else: await interaction.response.send_message(embed=er("Bot pas dans un vocal"),ephemeral=True)
 
 @bot.tree.command(name="queue",description="Voir la file musicale")
 async def queue(interaction:discord.Interaction):
@@ -996,7 +985,6 @@ async def volume(interaction:discord.Interaction,niveau:int):
 @app_commands.describe(membre="Le membre",raison="Raison")
 @app_commands.default_permissions(moderate_members=True)
 async def warn(interaction:discord.Interaction,membre:discord.Member,raison:str="Aucune raison"):
-    await interaction.response.defer()
     gid,uid=str(interaction.guild.id),str(membre.id)
     bot.warnings.setdefault(gid,{}).setdefault(uid,[]).append(
         {"reason":raison,"mod":str(interaction.user.id),"date":datetime.now(timezone.utc).isoformat()})
@@ -1013,7 +1001,7 @@ async def warn(interaction:discord.Interaction,membre:discord.Member,raison:str=
         try: await membre.kick(reason="7 warns"); sanction="Kick"
         except Exception: pass
     if sanction: e.add_field(name="⚡ Sanction auto",value=sanction)
-    await interaction.followup.send(embed=e)
+    await interaction.response.send_message(embed=e)
     await log_action(interaction.guild,"Warn",f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}",T.ORANGE)
     try: await membre.send(embed=mke(f"{T.WARN}  Avertissement reçu",f"**Serveur :** {interaction.guild.name}\n**Raison :** {raison}\n**Total :** {count}",T.ORANGE))
     except Exception: pass
@@ -1042,53 +1030,47 @@ async def warns(interaction:discord.Interaction,membre:discord.Member=None):
 @app_commands.describe(membre="Le membre",raison="Raison")
 @app_commands.default_permissions(ban_members=True)
 async def ban(interaction:discord.Interaction,membre:discord.Member,raison:str="Aucune"):
-    await interaction.response.defer()
     await membre.ban(reason=raison)
-    await interaction.followup.send(embed=mke(f"{T.BAN}  Banni",f"{membre.mention}\n**Raison :** {raison}",T.RED))
+    await interaction.response.send_message(embed=mke(f"{T.BAN}  Banni",f"{membre.mention}\n**Raison :** {raison}",T.RED))
     await log_action(interaction.guild,"Ban",f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}",T.RED)
 
 @bot.tree.command(name="unban",description="Débannir un utilisateur")
 @app_commands.describe(user_id="ID de l'utilisateur")
 @app_commands.default_permissions(ban_members=True)
 async def unban(interaction:discord.Interaction,user_id:str):
-    await interaction.response.defer(ephemeral=True)
     try:
         user=await bot.fetch_user(int(user_id)); await interaction.guild.unban(user)
-        await interaction.followup.send(embed=ok("Débanni",str(user)),ephemeral=True)
-    except Exception: await interaction.followup.send(embed=er("Introuvable"),ephemeral=True)
+        await interaction.response.send_message(embed=ok("Débanni",str(user)))
+    except Exception: await interaction.response.send_message(embed=er("Introuvable"),ephemeral=True)
 
 @bot.tree.command(name="kick",description="Expulser un membre")
 @app_commands.describe(membre="Le membre",raison="Raison")
 @app_commands.default_permissions(kick_members=True)
 async def kick(interaction:discord.Interaction,membre:discord.Member,raison:str="Aucune"):
-    await interaction.response.defer()
     await membre.kick(reason=raison)
-    await interaction.followup.send(embed=mke(f"{T.KICK}  Expulsé",f"{membre.mention}\n**Raison :** {raison}",T.ORANGE))
+    await interaction.response.send_message(embed=mke(f"{T.KICK}  Expulsé",f"{membre.mention}\n**Raison :** {raison}",T.ORANGE))
     await log_action(interaction.guild,"Kick",f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {interaction.user}",T.ORANGE)
 
 @bot.tree.command(name="mute",description="Mute un membre")
 @app_commands.describe(membre="Le membre",duree="Durée en minutes")
 @app_commands.default_permissions(moderate_members=True)
 async def mute(interaction:discord.Interaction,membre:discord.Member,duree:int=10):
-    await interaction.response.defer()
     await membre.timeout(datetime.now(timezone.utc)+timedelta(minutes=duree))
-    await interaction.followup.send(embed=mke(f"{T.MUTE}  Muté",f"{membre.mention} — **{duree} min**",T.BLURPLE))
+    await interaction.response.send_message(embed=mke(f"{T.MUTE}  Muté",f"{membre.mention} — **{duree} min**",T.BLURPLE))
 
 @bot.tree.command(name="unmute",description="Unmute un membre")
 @app_commands.describe(membre="Le membre")
 @app_commands.default_permissions(moderate_members=True)
 async def unmute(interaction:discord.Interaction,membre:discord.Member):
-    await interaction.response.defer()
     await membre.timeout(None)
-    await interaction.followup.send(embed=ok("Unmute",f"{membre.mention}"))
+    await interaction.response.send_message(embed=ok("Unmute",f"{membre.mention}"))
 
 @bot.tree.command(name="rename",description="Renommer un membre")
 @app_commands.describe(membre="Le membre",pseudo="Nouveau pseudo")
 @app_commands.default_permissions(manage_nicknames=True)
 async def rename(interaction:discord.Interaction,membre:discord.Member,pseudo:str):
-    await interaction.response.defer(ephemeral=True)
     old=membre.display_name; await membre.edit(nick=pseudo)
-    await interaction.followup.send(embed=ok("Renommé",f"`{old}` {T.ARROW} `{pseudo}`"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Renommé",f"`{old}` {T.ARROW} `{pseudo}`"))
 
 @bot.tree.command(name="purge",description="Supprimer des messages")
 @app_commands.describe(nombre="Nombre de messages")
@@ -1103,46 +1085,41 @@ async def purge(interaction:discord.Interaction,nombre:int):
 @app_commands.describe(nom="Nom",categorie="Catégorie")
 @app_commands.default_permissions(manage_channels=True)
 async def creersalon(interaction:discord.Interaction,nom:str,categorie:discord.CategoryChannel=None):
-    await interaction.response.defer(ephemeral=True)
     ch=await interaction.guild.create_text_channel(nom,category=categorie)
-    await interaction.followup.send(embed=ok("Salon créé",ch.mention),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Salon créé",ch.mention))
 
 @bot.tree.command(name="creervoice",description="Créer un salon vocal")
 @app_commands.describe(nom="Nom",categorie="Catégorie")
 @app_commands.default_permissions(manage_channels=True)
 async def creervoice(interaction:discord.Interaction,nom:str,categorie:discord.CategoryChannel=None):
-    await interaction.response.defer(ephemeral=True)
     ch=await interaction.guild.create_voice_channel(nom,category=categorie)
-    await interaction.followup.send(embed=ok("Vocal créé",f"🔊 {ch.name}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Vocal créé",f"🔊 {ch.name}"))
 
 @bot.tree.command(name="supprimersalon",description="Supprimer un salon")
 @app_commands.describe(salon="Le salon")
 @app_commands.default_permissions(manage_channels=True)
 async def supprimersalon(interaction:discord.Interaction,salon:discord.TextChannel):
-    await interaction.response.defer(ephemeral=True)
     name=salon.name; await salon.delete()
-    await interaction.followup.send(embed=ok("Supprimé",f"`{name}`"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Supprimé",f"`{name}`"))
 
 @bot.tree.command(name="lock",description="Verrouiller un salon")
 @app_commands.describe(salon="Salon (vide = actuel)",bloquer_lecture="Bloquer aussi la lecture")
 @app_commands.default_permissions(manage_channels=True)
 async def lock(interaction:discord.Interaction,salon:discord.TextChannel=None,bloquer_lecture:bool=False):
-    await interaction.response.defer(ephemeral=True)
     target=salon or interaction.channel
     ow=target.overwrites_for(interaction.guild.default_role)
     ow.send_messages=False
     if bloquer_lecture: ow.view_channel=False
     await target.set_permissions(interaction.guild.default_role,overwrite=ow)
-    await interaction.followup.send(embed=mke("🔒  Verrouillé",target.mention,T.RED),ephemeral=True)
+    await interaction.response.send_message(embed=mke("🔒  Verrouillé",target.mention,T.RED))
 
 @bot.tree.command(name="unlock",description="Déverrouiller un salon")
 @app_commands.describe(salon="Salon")
 @app_commands.default_permissions(manage_channels=True)
 async def unlock(interaction:discord.Interaction,salon:discord.TextChannel=None):
-    await interaction.response.defer(ephemeral=True)
     target=salon or interaction.channel
     await target.set_permissions(interaction.guild.default_role,send_messages=True,view_channel=True)
-    await interaction.followup.send(embed=ok("Déverrouillé",target.mention),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Déverrouillé",target.mention))
 
 @bot.tree.command(name="slowmode",description="Mode lent sur tous les salons")
 @app_commands.describe(secondes="Délai en secondes (0 = désactiver)")
@@ -1161,25 +1138,22 @@ async def slowmode(interaction:discord.Interaction,secondes:int):
 @app_commands.describe(nom="Nom",couleur="Couleur hex")
 @app_commands.default_permissions(manage_roles=True)
 async def creerole(interaction:discord.Interaction,nom:str,couleur:str="#5865F2"):
-    await interaction.response.defer(ephemeral=True)
     role=await interaction.guild.create_role(name=nom,color=discord.Color(int(couleur.replace("#",""),16)))
-    await interaction.followup.send(embed=ok("Rôle créé",role.mention),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Rôle créé",role.mention))
 
 @bot.tree.command(name="addrole",description="Ajouter un rôle à un membre")
 @app_commands.describe(membre="Membre",role="Rôle")
 @app_commands.default_permissions(manage_roles=True)
 async def addrole(interaction:discord.Interaction,membre:discord.Member,role:discord.Role):
-    await interaction.response.defer(ephemeral=True)
     await membre.add_roles(role)
-    await interaction.followup.send(embed=ok("Rôle ajouté",f"{role.mention} {T.ARROW} {membre.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Rôle ajouté",f"{role.mention} {T.ARROW} {membre.mention}"))
 
 @bot.tree.command(name="removerole",description="Retirer un rôle d'un membre")
 @app_commands.describe(membre="Membre",role="Rôle")
 @app_commands.default_permissions(manage_roles=True)
 async def removerole(interaction:discord.Interaction,membre:discord.Member,role:discord.Role):
-    await interaction.response.defer(ephemeral=True)
     await membre.remove_roles(role)
-    await interaction.followup.send(embed=inf("Rôle retiré",f"{role.mention} de {membre.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=inf("Rôle retiré",f"{role.mention} de {membre.mention}"))
 
 @bot.tree.command(name="roleall",description="Donner un rôle à tous les membres")
 @app_commands.describe(role="Rôle")
@@ -1194,35 +1168,46 @@ async def roleall(interaction:discord.Interaction,role:discord.Role):
     await interaction.followup.send(embed=ok("Rôle donné à tous",f"{role.mention} — **{count}** membres"))
 
 @bot.tree.command(name="autorole",description="Gérer les rôles automatiques aux nouveaux membres")
-@app_commands.describe(action="ajouter ou retirer un rôle auto",role="Le rôle",reset="Supprimer tous les auto-rôles")
+@app_commands.describe(
+    action="ajouter ou retirer un rôle auto",
+    role="Le rôle à ajouter/retirer",
+    reset="Supprimer tous les auto-rôles"
+)
 @app_commands.choices(action=[
-    app_commands.Choice(name="Ajouter un rôle auto",value="ajouter"),
-    app_commands.Choice(name="Retirer un rôle auto",value="retirer")])
+    app_commands.Choice(name="Ajouter un rôle auto", value="ajouter"),
+    app_commands.Choice(name="Retirer un rôle auto", value="retirer"),
+])
 @app_commands.default_permissions(administrator=True)
 async def autorole(interaction:discord.Interaction,action:str="ajouter",role:discord.Role=None,reset:bool=False):
     gid=str(interaction.guild.id)
     current=bot.auto_roles.get(gid,[])
-    if isinstance(current,int): current=[current]
+    if isinstance(current,int): current=[current]  # compat
+
     if reset:
         bot.auto_roles[gid]=[]
-        return await interaction.response.send_message(embed=ok("Auto-rôles supprimés","Plus aucun rôle automatique."),ephemeral=True)
+        return await interaction.response.send_message(embed=ok("Auto-rôles supprimés","Plus aucun rôle automatique."))
+
     if not role:
+        # Afficher la liste actuelle
         if not current:
             return await interaction.response.send_message(embed=inf("Aucun auto-rôle","Utilise `/autorole action:Ajouter role:@role` pour en ajouter."),ephemeral=True)
         roles_display=[interaction.guild.get_role(rid) for rid in current]
         roles_txt="\n".join([f"• {r.mention}" for r in roles_display if r]) or "Aucun"
         return await interaction.response.send_message(embed=inf(f"Auto-rôles ({len(current)})",roles_txt),ephemeral=True)
+
     rid=role.id
     if action=="ajouter":
         if rid not in current:
-            current.append(rid); bot.auto_roles[gid]=current
-            await interaction.response.send_message(embed=ok("Auto-rôle ajouté",f"{role.mention} — **{len(current)} rôle(s)**"),ephemeral=True)
+            current.append(rid)
+            bot.auto_roles[gid]=current
+            await interaction.response.send_message(embed=ok("Auto-rôle ajouté",f"{role.mention} — **{len(current)} rôle(s) au total**"))
         else:
             await interaction.response.send_message(embed=inf("Déjà présent",f"{role.mention} est déjà en auto-rôle."),ephemeral=True)
-    else:
+    else:  # retirer
         if rid in current:
-            current.remove(rid); bot.auto_roles[gid]=current
-            await interaction.response.send_message(embed=ok("Auto-rôle retiré",f"{role.mention} retiré — **{len(current)} rôle(s) restants**"),ephemeral=True)
+            current.remove(rid)
+            bot.auto_roles[gid]=current
+            await interaction.response.send_message(embed=ok("Auto-rôle retiré",f"{role.mention} retiré — **{len(current)} rôle(s) restants**"))
         else:
             await interaction.response.send_message(embed=inf("Pas trouvé",f"{role.mention} n'est pas en auto-rôle."),ephemeral=True)
 
@@ -1230,23 +1215,21 @@ async def autorole(interaction:discord.Interaction,action:str="ajouter",role:dis
 @app_commands.describe(titre="Titre",roles="Mentions des rôles")
 @app_commands.default_permissions(administrator=True)
 async def rolemenu(interaction:discord.Interaction,titre:str,roles:str):
-    await interaction.response.defer(ephemeral=True)
     ids=re.findall(r'<@&(\d+)>',roles)
     objs=[interaction.guild.get_role(int(i)) for i in ids if interaction.guild.get_role(int(i))]
-    if not objs: return await interaction.followup.send(embed=er("Erreur","Utilise des mentions de rôles."),ephemeral=True)
+    if not objs: return await interaction.response.send_message(embed=er("Erreur","Utilise des mentions de rôles."),ephemeral=True)
     e=mke(f"{T.ROLE}  {titre}","\n".join([f"{T.ARROW} {r.mention}" for r in objs]),T.PINK)
     await interaction.channel.send(embed=e,view=RoleMenuView(objs))
-    await interaction.followup.send(embed=ok("Menu créé !"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Menu créé !"),ephemeral=True)
 
 # ── Systèmes ──
 @bot.tree.command(name="panel",description="Créer un panel de tickets")
 @app_commands.describe(titre="Titre",description="Description",role_support="Rôle support")
 @app_commands.default_permissions(administrator=True)
 async def panel(interaction:discord.Interaction,titre:str="Support",description:str="Clique pour ouvrir un ticket.",role_support:discord.Role=None):
-    await interaction.response.defer(ephemeral=True)
     bot.ticket_configs[str(interaction.guild.id)]={"support_role":role_support.id if role_support else None}
     await interaction.channel.send(embed=mke(f"{T.TICKET}  {titre}",description,T.BLURPLE),view=TicketView())
-    await interaction.followup.send(embed=ok("Panel créé !"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="reglement",description="Envoyer le règlement")
 @app_commands.describe(type_reglement="defaut = règles du bot | perso = tu écris",avec_bouton="Ajouter bouton",role="Rôle à l'acceptation")
@@ -1258,7 +1241,6 @@ async def reglement(interaction:discord.Interaction,type_reglement:str="defaut",
     if type_reglement=="perso":
         await interaction.response.send_modal(ReglementModal(avec_bouton,role))
     else:
-        await interaction.response.defer(ephemeral=True)
         if role: bot.verif_roles[str(interaction.guild.id)]=role.id
         rules=[(f"{T.DIAMOND}  Respect","Respecte tous les membres et le staff."),
                (f"{T.LIGHTNING}  Anti-spam","Évite de répéter les mêmes messages."),
@@ -1268,13 +1250,12 @@ async def reglement(interaction:discord.Interaction,type_reglement:str="defaut",
         e=discord.Embed(title=f"{T.SHIELD}  Règlement du serveur",description=T.LINE,color=T.BLURPLE,timestamp=datetime.now(timezone.utc))
         for t,c in rules: e.add_field(name=t,value=c,inline=False)
         await interaction.channel.send(embed=e,view=RulesView() if avec_bouton else None)
-        await interaction.followup.send(embed=ok("Règlement envoyé !"),ephemeral=True)
+        await interaction.response.send_message(embed=ok("Règlement envoyé !"),ephemeral=True)
 
 @bot.tree.command(name="verification",description="Panel de vérification")
 @app_commands.describe(role="Rôle à donner",titre="Titre",description="Description")
 @app_commands.default_permissions(administrator=True)
 async def verification(interaction:discord.Interaction,role:discord.Role=None,titre:str="Vérification",description:str="Clique pour te vérifier !"):
-    await interaction.response.defer(ephemeral=True)
     gid=str(interaction.guild.id)
     if not role:
         role=(discord.utils.get(interaction.guild.roles,name="✅ Vérifié") or
@@ -1282,21 +1263,21 @@ async def verification(interaction:discord.Interaction,role:discord.Role=None,ti
     bot.verif_roles[gid]=role.id
     e=mke(f"{T.SHIELD}  {titre}",f"{description}\n\n**Rôle :** {role.mention}",T.BLURPLE)
     await interaction.channel.send(embed=e,view=VerifyView())
-    await interaction.followup.send(embed=ok("Panel créé !"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="arrivee",description="Configurer le salon des messages de bienvenue")
 @app_commands.describe(salon="Salon où envoyer les arrivées")
 @app_commands.default_permissions(administrator=True)
 async def arrivee(interaction:discord.Interaction,salon:discord.TextChannel):
     bot.arrivee_channels[str(interaction.guild.id)]=salon.id
-    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Dans {salon.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Dans {salon.mention}"))
 
 @bot.tree.command(name="depart",description="Configurer le salon des messages de départ")
 @app_commands.describe(salon="Salon où envoyer les départs")
 @app_commands.default_permissions(administrator=True)
 async def depart(interaction:discord.Interaction,salon:discord.TextChannel):
     bot.depart_channels[str(interaction.guild.id)]=salon.id
-    await interaction.response.send_message(embed=ok("Départs configurés",f"Dans {salon.mention}"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Départs configurés",f"Dans {salon.mention}"))
 
 @bot.tree.command(name="giveaway",description="Créer un giveaway")
 @app_commands.describe(titre="Titre",prix="Prix",duree_heures="Durée en heures",gagnants="Gagnants")
@@ -1320,20 +1301,19 @@ async def giveaway_cmd(interaction:discord.Interaction,titre:str,prix:str,duree_
 @app_commands.describe(message_id="ID du message du giveaway")
 @app_commands.default_permissions(administrator=True)
 async def reroll(interaction:discord.Interaction,message_id:str):
-    await interaction.response.defer()
     g=bot.giveaways.get(message_id)
-    if not g: return await interaction.followup.send(embed=er("Introuvable"),ephemeral=True)
-    if not g.get("ended"): return await interaction.followup.send(embed=er("En cours"),ephemeral=True)
+    if not g: return await interaction.response.send_message(embed=er("Introuvable"),ephemeral=True)
+    if not g.get("ended"): return await interaction.response.send_message(embed=er("En cours"),ephemeral=True)
     p=g.get("participants",[])
-    if not p: return await interaction.followup.send(embed=er("Aucun participant"),ephemeral=True)
+    if not p: return await interaction.response.send_message(embed=er("Aucun participant"),ephemeral=True)
     winners=[]
     for wid in random.sample(p,min(g.get("winners",1),len(p))):
         try: winners.append(await bot.fetch_user(wid))
         except Exception: pass
     if winners:
-        await interaction.followup.send(content=" ".join([w.mention for w in winners]),
+        await interaction.response.send_message(content=" ".join([w.mention for w in winners]),
             embed=mke(f"{T.GIVEAWAY}  Reroll !",f"**Gagnant(s) :** {', '.join([w.mention for w in winners])}\n**Prix :** {g.get('prize')}",T.GOLD))
-    else: await interaction.followup.send(embed=er("Erreur reroll"),ephemeral=True)
+    else: await interaction.response.send_message(embed=er("Erreur reroll"),ephemeral=True)
 
 @bot.tree.command(name="poll",description="Créer un sondage interactif")
 @app_commands.describe(question="La question",option1="Option 1",option2="Option 2",
@@ -1342,7 +1322,6 @@ async def reroll(interaction:discord.Interaction,message_id:str):
 @app_commands.default_permissions(manage_messages=True)
 async def poll_cmd(interaction:discord.Interaction,question:str,option1:str,option2:str,
                    option3:str=None,option4:str=None,option5:str=None,duree_minutes:int=0):
-    await interaction.response.defer()
     options=[o for o in [option1,option2,option3,option4,option5] if o]
     end_time=None
     if duree_minutes>0: end_time=datetime.now(timezone.utc)+timedelta(minutes=duree_minutes)
@@ -1353,14 +1332,13 @@ async def poll_cmd(interaction:discord.Interaction,question:str,option1:str,opti
     if end_time: desc+=f"\n\n{T.CLOCK} Fin : <t:{int(end_time.timestamp())}:R>"
     e=mke(f"{T.POLL}  Sondage",desc,T.BLURPLE)
     e.set_footer(text=f"Sondage par {interaction.user.display_name}"+(f" • {duree_minutes} min" if duree_minutes>0 else ""))
-    # followup.send(wait=True) → retourne directement le message avec son ID
-    msg=await interaction.followup.send(embed=e,wait=True)
-    msg_id=str(msg.id)
+    await interaction.response.send_message(embed=e)
+    msg=await interaction.original_response(); msg_id=str(msg.id)
     poll_data={"question":question,"options":options,"votes":{},"ended":False,
                "guild_id":str(interaction.guild.id),"channel_id":str(interaction.channel.id)}
     if end_time: poll_data["end_time"]=end_time.isoformat()
     bot.polls[msg_id]=poll_data
-    await msg.edit(embed=e,view=PollView(msg_id,options))
+    await msg.edit(view=PollView(msg_id,options))
 
 # ── Infos ──
 @bot.tree.command(name="userinfo",description="Informations sur un membre")
@@ -1510,7 +1488,7 @@ async def restore(interaction:discord.Interaction,nom:str):
 async def antiraid(interaction:discord.Interaction,activer:bool=True,seuil:int=5,action:str="kick"):
     bot.raid_protection[str(interaction.guild.id)]={"enabled":activer,"threshold":seuil,"action":action}
     await interaction.response.send_message(embed=mke(f"{T.SHIELD}  Anti-Raid",
-        f"**Statut :** {'✅' if activer else '❌'}\n**Seuil :** {seuil}/10s\n**Action :** {action}",T.BLURPLE),ephemeral=True)
+        f"**Statut :** {'✅' if activer else '❌'}\n**Seuil :** {seuil}/10s\n**Action :** {action}",T.BLURPLE))
 
 @bot.tree.command(name="antispam",description="Configurer l'anti-spam")
 @app_commands.describe(activer="Activer",messages="Max messages",temps="En secondes",mentions="Max mentions",action="mute/kick/ban",duree_mute="Minutes")
@@ -1518,17 +1496,21 @@ async def antiraid(interaction:discord.Interaction,activer:bool=True,seuil:int=5
 async def antispam(interaction:discord.Interaction,activer:bool=True,messages:int=5,temps:int=5,mentions:int=5,action:str="mute",duree_mute:int=5):
     bot.antispam_config[str(interaction.guild.id)]={"enabled":activer,"msg_limit":messages,"msg_time":temps,"mention_limit":mentions,"action":action,"mute_duration":duree_mute}
     await interaction.response.send_message(embed=mke(f"{T.SPAM}  Anti-Spam",
-        f"**Statut :** {'✅' if activer else '❌'}\n**Messages :** {messages}/{temps}s\n**Mentions :** {mentions}\n**Action :** {action}",T.BLURPLE),ephemeral=True)
+        f"**Statut :** {'✅' if activer else '❌'}\n**Messages :** {messages}/{temps}s\n**Mentions :** {mentions}\n**Action :** {action}",T.BLURPLE))
 
 @bot.tree.command(name="antinuke",description="Configurer la protection anti-nuke")
-@app_commands.describe(activer="Activer l'anti-nuke",seuil="Actions max en 10s avant sanction",action="kick ou ban",
-                        ajouter_whitelist="ID d'un membre à ajouter en whitelist",retirer_whitelist="ID d'un membre à retirer de la whitelist")
+@app_commands.describe(activer="Activer l'anti-nuke",seuil="Actions max en 10s avant sanction",
+                        action="kick ou ban",
+                        ajouter_whitelist="ID d'un membre à ajouter en whitelist",
+                        retirer_whitelist="ID d'un membre à retirer de la whitelist")
 @app_commands.default_permissions(administrator=True)
 async def antinuke(interaction:discord.Interaction,activer:bool=True,seuil:int=5,action:str="kick",
                    ajouter_whitelist:str=None,retirer_whitelist:str=None):
     gid=str(interaction.guild.id)
     cfg=bot.antinuke_config.setdefault(gid,{"enabled":False,"threshold":5,"action":"kick","whitelist":[]})
-    cfg["enabled"]=activer; cfg["threshold"]=max(1,seuil); cfg["action"]=action if action in ("kick","ban") else "kick"
+    cfg["enabled"]=activer
+    cfg["threshold"]=max(1,seuil)
+    cfg["action"]=action if action in ("kick","ban") else "kick"
     wl=cfg.setdefault("whitelist",[])
     if ajouter_whitelist:
         try:
@@ -1543,19 +1525,23 @@ async def antinuke(interaction:discord.Interaction,activer:bool=True,seuil:int=5
     wl_display=[interaction.guild.get_member(uid).mention if interaction.guild.get_member(uid) else f"`{uid}`" for uid in wl]
     e=mke(f"{T.NUKE}  Anti-Nuke",
           f"**Statut :** {'✅ Activé' if activer else '❌ Désactivé'}\n"
-          f"**Seuil :** {seuil} actions / 10s\n**Sanction :** {cfg['action']}\n"
+          f"**Seuil :** {seuil} actions / 10s\n"
+          f"**Sanction :** {cfg['action']}\n"
           f"**Whitelist :** {', '.join(wl_display) if wl_display else 'Aucun'}\n\n"
-          f"**Actions surveillées :** Bans • Suppression de salons • Suppression de rôles",T.RED)
+          f"**Actions surveillées :**\n"
+          f"• Bans en masse\n• Suppression de salons\n• Suppression de rôles",
+          T.RED)
     e.set_footer(text="⚠️ Ajoute tes admins de confiance en whitelist !")
-    await interaction.response.send_message(embed=e,ephemeral=True)
+    await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="tempvoice",description="Salons vocaux temporaires")
 @app_commands.describe(salon="Salon déclencheur")
 @app_commands.default_permissions(administrator=True)
 async def tempvoice(interaction:discord.Interaction,salon:discord.VoiceChannel):
     bot.temp_voices[str(interaction.guild.id)]=salon.id
-    await interaction.response.send_message(embed=ok("Vocaux temporaires",f"Rejoins **{salon.name}** pour créer ton salon !"),ephemeral=True)
+    await interaction.response.send_message(embed=ok("Vocaux temporaires",f"Rejoins **{salon.name}** pour créer ton salon !"))
 
+# ── DM All ──
 @bot.tree.command(name="dmall",description="Envoyer un DM à tous les membres [Owner uniquement]")
 @app_commands.describe(message="Le message à envoyer en DM")
 async def dmall(interaction:discord.Interaction,message:str):
@@ -1580,7 +1566,7 @@ if __name__=="__main__":
     load_dotenv()
     token=os.environ.get('DISCORD_BOT_TOKEN')
     if token:
-        logger.info("⚡ Aegis V1.11 démarre...")
+        logger.info("⚡ Aegis V1.10 démarre...")
         bot.run(token)
     else:
         logger.error("❌ DISCORD_BOT_TOKEN manquant !")

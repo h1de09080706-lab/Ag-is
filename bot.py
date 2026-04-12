@@ -818,7 +818,7 @@ async def aide(interaction:discord.Interaction):
     e.add_field(name=f"{T.CHANNEL}  Salons",value="`/creersalon` `/creervoice` `/supprimersalon` `/lock` `/unlock` `/slowmode`",inline=False)
     e.add_field(name=f"{T.ROLE}  Rôles",value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`",inline=False)
     e.add_field(name=f"{T.GEAR}  Systèmes",value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`",inline=False)
-    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice` `/autorole`",inline=False)
+    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice`",inline=False)
     e.add_field(name=f"{T.MUSIC}  Musique",value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`",inline=False)
     e.add_field(name=f"{T.XP}  XP & Stats",value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`",inline=False)
     e.add_field(name=f"{T.MEGA}  Divers",value="`/dire` `/embed` `/sondage-rapide` `/tirage`",inline=False)

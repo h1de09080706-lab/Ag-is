@@ -129,7 +129,7 @@ async def ask_groq(q: str) -> str:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
                 r = await s.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    json={"model":"llama3-8b-8192",
+                    json={"model":"llama3-70b-8192",
                           "messages":[{"role":"system","content":AI_SYS},
                                       {"role":"user","content":q[:500]}],
                           "max_tokens":200,"temperature":0.85},
@@ -150,8 +150,18 @@ FFMPEG = {'before_options':'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_
 async def fetch_track(query: str):
     try:
         import yt_dlp
-        opts = {'format':'bestaudio/best','noplaylist':True,'quiet':True,
-                'no_warnings':True,'default_search':'ytsearch1','source_address':'0.0.0.0'}
+        opts = {
+            'format':'bestaudio/best',
+            'noplaylist':True,
+            'quiet':True,
+            'no_warnings':True,
+            'default_search':'ytsearch1',
+            'source_address':'0.0.0.0',
+            'extractor_retries': 3,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+        }
         loop = asyncio.get_event_loop()
         def _f():
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -432,7 +442,7 @@ async def on_ready():
             "🤖 Aegis V1.10 — Bot Discord multifonction\n\n"
             "✨ Modération • 🎵 Musique • 🎉 Giveaway • 📊 Sondages • ⭐ XP\n"
             "🛡️ Anti-raid/spam/nuke • 🎫 Tickets • 🤖 IA Groq\n\n"
-            "🆘 Support : https://discord.gg/LIEN_SUPPORT\n"
+            "🆘 Support : https://discord.gg/6rN8pneGdy\n"
             "/aide pour toutes les commandes."
         ))
     except Exception as e: logger.warning(f"Bio: {e}")
@@ -818,12 +828,12 @@ async def aide(interaction:discord.Interaction):
     e.add_field(name=f"{T.CHANNEL}  Salons",value="`/creersalon` `/creervoice` `/supprimersalon` `/lock` `/unlock` `/slowmode`",inline=False)
     e.add_field(name=f"{T.ROLE}  Rôles",value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`",inline=False)
     e.add_field(name=f"{T.GEAR}  Systèmes",value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`",inline=False)
-    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice` `/autorole`",inline=False)
+    e.add_field(name=f"{T.WAVE}  Membres",value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice`",inline=False)
     e.add_field(name=f"{T.MUSIC}  Musique",value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`",inline=False)
     e.add_field(name=f"{T.XP}  XP & Stats",value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`",inline=False)
     e.add_field(name=f"{T.MEGA}  Divers",value="`/dire` `/embed` `/sondage-rapide` `/tirage`",inline=False)
     e.add_field(name=f"{T.AI}  IA",value="Mentionne **@Aegis** ou écris **aegis** dans un message !",inline=False)
-    e.set_footer(text="Aegis V1.10 • https://discord.gg/LIEN_SUPPORT")
+    e.set_footer(text="Aegis V1.10 • https://discord.gg/6rN8pneGdy")
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="ping",description="Latence du bot")
@@ -1266,18 +1276,38 @@ async def verification(interaction:discord.Interaction,role:discord.Role=None,ti
     await interaction.response.send_message(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="arrivee",description="Configurer le salon des messages de bienvenue")
-@app_commands.describe(salon="Salon où envoyer les arrivées")
+@app_commands.describe(salon_id="ID ou mention du salon (copie l'ID avec clic droit)")
 @app_commands.default_permissions(administrator=True)
-async def arrivee(interaction:discord.Interaction,salon:discord.TextChannel):
-    bot.arrivee_channels[str(interaction.guild.id)]=salon.id
-    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Dans {salon.mention}"))
+async def arrivee(interaction:discord.Interaction,salon_id:str):
+    gid=str(interaction.guild.id)
+    # Nettoyer l'ID (accepte mention <#123> ou ID brut)
+    clean=salon_id.strip().replace("<#","").replace(">","")
+    try:
+        ch=interaction.guild.get_channel(int(clean))
+        if not ch: ch=await interaction.guild.fetch_channel(int(clean))
+    except Exception:
+        # Chercher par nom
+        ch=discord.utils.find(lambda c: c.name==salon_id.strip(), interaction.guild.text_channels)
+    if not ch:
+        return await interaction.response.send_message(embed=er("Salon introuvable","Utilise l'ID du salon (clic droit → Copier l'identifiant)."),ephemeral=True)
+    bot.arrivee_channels[gid]=ch.id
+    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Dans {ch.mention}"))
 
 @bot.tree.command(name="depart",description="Configurer le salon des messages de départ")
-@app_commands.describe(salon="Salon où envoyer les départs")
+@app_commands.describe(salon_id="ID ou mention du salon (copie l'ID avec clic droit)")
 @app_commands.default_permissions(administrator=True)
-async def depart(interaction:discord.Interaction,salon:discord.TextChannel):
-    bot.depart_channels[str(interaction.guild.id)]=salon.id
-    await interaction.response.send_message(embed=ok("Départs configurés",f"Dans {salon.mention}"))
+async def depart(interaction:discord.Interaction,salon_id:str):
+    gid=str(interaction.guild.id)
+    clean=salon_id.strip().replace("<#","").replace(">","")
+    try:
+        ch=interaction.guild.get_channel(int(clean))
+        if not ch: ch=await interaction.guild.fetch_channel(int(clean))
+    except Exception:
+        ch=discord.utils.find(lambda c: c.name==salon_id.strip(), interaction.guild.text_channels)
+    if not ch:
+        return await interaction.response.send_message(embed=er("Salon introuvable","Utilise l'ID du salon (clic droit → Copier l'identifiant)."),ephemeral=True)
+    bot.depart_channels[gid]=ch.id
+    await interaction.response.send_message(embed=ok("Départs configurés",f"Dans {ch.mention}"))
 
 @bot.tree.command(name="giveaway",description="Créer un giveaway")
 @app_commands.describe(titre="Titre",prix="Prix",duree_heures="Durée en heures",gagnants="Gagnants")
@@ -1545,6 +1575,12 @@ async def tempvoice(interaction:discord.Interaction,salon:discord.VoiceChannel):
 @bot.tree.command(name="dmall",description="Envoyer un DM à tous les membres [Owner uniquement]")
 @app_commands.describe(message="Le message à envoyer en DM")
 async def dmall(interaction:discord.Interaction,message:str):
+    if BOT_OWNER_ID == 0:
+        return await interaction.response.send_message(
+            embed=er("BOT_OWNER_ID non configuré",
+                     "Ajoute **BOT_OWNER_ID** dans Railway → Variables avec ton ID Discord.\n"
+                     "Pour trouver ton ID : Active le mode développeur dans Discord → clic droit sur toi → Copier l'identifiant."),
+            ephemeral=True)
     if not is_owner(interaction.user.id):
         return await interaction.response.send_message(embed=er("Accès refusé","Réservé au propriétaire du bot."),ephemeral=True)
     await interaction.response.defer(ephemeral=True)

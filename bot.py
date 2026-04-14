@@ -129,7 +129,7 @@ async def ask_groq(q: str) -> str:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
                 r = await s.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    json={"model":"llama3-70b-8192",
+                    json={"model":"mixtral-8x7b-32768",
                           "messages":[{"role":"system","content":AI_SYS},
                                       {"role":"user","content":q[:500]}],
                           "max_tokens":200,"temperature":0.85},
@@ -562,21 +562,9 @@ async def on_guild_role_delete(role):
             await _nuke_check(role.guild,entry.user.id,"role_delete"); break
     except Exception: pass
 
-# Cache anti-doublon (deque FIFO avec taille max)
-_processed_messages: deque = deque(maxlen=2000)
-_processed_msg_set:  set   = set()
-
 @bot.event
 async def on_message(message:discord.Message):
     if message.author.bot: return
-    # Guard anti-doublon Railway double-instance
-    if message.id in _processed_msg_set: return
-    _processed_msg_set.add(message.id)
-    _processed_messages.append(message.id)
-    # Nettoyer le set quand la deque retire des anciens éléments
-    while len(_processed_msg_set) > 2000:
-        try: _processed_msg_set.discard(_processed_messages[0])
-        except Exception: break
     if message.guild:
         if await check_spam(message): return
         await add_xp(message)
@@ -846,8 +834,12 @@ async def ping(interaction:discord.Interaction):
 @app_commands.default_permissions(manage_messages=True)
 async def dire(interaction:discord.Interaction,message:str,salon:discord.TextChannel=None):
     target=salon or interaction.channel
+    perms=target.permissions_for(interaction.guild.me)
+    if not perms.send_messages:
+        return await interaction.response.send_message(embed=er("Accès refusé",f"Je n'ai pas la permission dans {target.mention}."),ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     await target.send(message)
-    await interaction.response.send_message(embed=ok("Envoyé",f"Dans {target.mention}"),ephemeral=True)
+    await interaction.followup.send(embed=ok("Envoyé",f"Dans {target.mention}"),ephemeral=True)
 
 @bot.tree.command(name="embed",description="Envoyer un embed personnalisé")
 @app_commands.describe(titre="Titre",contenu="Contenu",couleur="Couleur hex",salon="Salon cible")
@@ -856,10 +848,15 @@ async def embed_cmd(interaction:discord.Interaction,titre:str,contenu:str,couleu
     target=salon or interaction.channel
     try: color=int(couleur.replace("#",""),16)
     except: color=T.BLURPLE
+    # Vérifier que le bot a accès au salon
+    perms=target.permissions_for(interaction.guild.me)
+    if not perms.send_messages or not perms.embed_links:
+        return await interaction.response.send_message(embed=er("Accès refusé",f"Je n'ai pas la permission d'envoyer des embeds dans {target.mention}."),ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     e=discord.Embed(title=titre,description=contenu,color=color,timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Par {interaction.user.display_name}")
     await target.send(embed=e)
-    await interaction.response.send_message(embed=ok("Embed envoyé !",f"Dans {target.mention}"),ephemeral=True)
+    await interaction.followup.send(embed=ok("Embed envoyé !",f"Dans {target.mention}"),ephemeral=True)
 
 @bot.tree.command(name="sondage-rapide",description="Sondage Oui/Non rapide")
 @app_commands.describe(question="Ta question")
@@ -911,16 +908,24 @@ async def suggestion(interaction:discord.Interaction,texte:str,salon:discord.Tex
 async def play(interaction:discord.Interaction,recherche:str):
     if not interaction.user.voice:
         return await interaction.response.send_message(embed=er("Pas dans un vocal","Rejoins un salon vocal d'abord !"),ephemeral=True)
+    vc_channel = interaction.user.voice.channel
+    # Vérifier permissions bot dans le vocal
+    perms = vc_channel.permissions_for(interaction.guild.me)
+    if not perms.connect or not perms.speak:
+        return await interaction.response.send_message(embed=er("Permission manquante","Je n'ai pas la permission de rejoindre ou parler dans ton salon vocal."),ephemeral=True)
     await interaction.response.defer()
     gid=str(interaction.guild.id)
     await interaction.followup.send(embed=inf(f"{T.MUSIC}  Recherche...",f"🔍 `{recherche}`"))
     track=await fetch_track(recherche)
     if not track or not track.get('url'):
-        return await interaction.edit_original_response(embed=er("Introuvable","Aucun résultat."))
+        return await interaction.edit_original_response(embed=er("Introuvable","Aucun résultat YouTube. Essaie un autre titre ou un lien direct."))
     vc=bot.vc_pool.get(gid)
     if not vc or not vc.is_connected():
-        try: vc=await interaction.user.voice.channel.connect(); bot.vc_pool[gid]=vc
-        except Exception as ex: return await interaction.edit_original_response(embed=er("Erreur vocal",str(ex)[:100]))
+        try:
+            vc=await vc_channel.connect()
+            bot.vc_pool[gid]=vc
+        except Exception as ex:
+            return await interaction.edit_original_response(embed=er("Erreur connexion vocal",f"`{str(ex)[:100]}`\nVérifie que ffmpeg est installé (Dockerfile requis)."))
     bot.music_queues.setdefault(gid,[]).append(track)
     if not vc.is_playing() and not vc.is_paused():
         await play_next(gid)
@@ -932,6 +937,7 @@ async def play(interaction:discord.Interaction,recherche:str):
         e=mke(f"{T.MUSIC}  Ajouté à la file",f"**{track['title']}**\n📋 Position : `#{pos}`",T.GOLD)
         if track.get('thumbnail'): e.set_thumbnail(url=track['thumbnail'])
     await interaction.edit_original_response(embed=e)
+
 
 @bot.tree.command(name="pause",description="Mettre en pause")
 async def pause(interaction:discord.Interaction):
@@ -1229,8 +1235,9 @@ async def rolemenu(interaction:discord.Interaction,titre:str,roles:str):
     objs=[interaction.guild.get_role(int(i)) for i in ids if interaction.guild.get_role(int(i))]
     if not objs: return await interaction.response.send_message(embed=er("Erreur","Utilise des mentions de rôles."),ephemeral=True)
     e=mke(f"{T.ROLE}  {titre}","\n".join([f"{T.ARROW} {r.mention}" for r in objs]),T.PINK)
+    await interaction.response.defer(ephemeral=True)
     await interaction.channel.send(embed=e,view=RoleMenuView(objs))
-    await interaction.response.send_message(embed=ok("Menu créé !"),ephemeral=True)
+    await interaction.followup.send(embed=ok("Menu créé !"),ephemeral=True)
 
 # ── Systèmes ──
 @bot.tree.command(name="panel",description="Créer un panel de tickets")
@@ -1238,8 +1245,9 @@ async def rolemenu(interaction:discord.Interaction,titre:str,roles:str):
 @app_commands.default_permissions(administrator=True)
 async def panel(interaction:discord.Interaction,titre:str="Support",description:str="Clique pour ouvrir un ticket.",role_support:discord.Role=None):
     bot.ticket_configs[str(interaction.guild.id)]={"support_role":role_support.id if role_support else None}
+    await interaction.response.defer(ephemeral=True)
     await interaction.channel.send(embed=mke(f"{T.TICKET}  {titre}",description,T.BLURPLE),view=TicketView())
-    await interaction.response.send_message(embed=ok("Panel créé !"),ephemeral=True)
+    await interaction.followup.send(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="reglement",description="Envoyer le règlement")
 @app_commands.describe(type_reglement="defaut = règles du bot | perso = tu écris",avec_bouton="Ajouter bouton",role="Rôle à l'acceptation")
@@ -1259,8 +1267,9 @@ async def reglement(interaction:discord.Interaction,type_reglement:str="defaut",
                (f"{T.CROWN}  Staff","Les décisions du staff sont finales.")]
         e=discord.Embed(title=f"{T.SHIELD}  Règlement du serveur",description=T.LINE,color=T.BLURPLE,timestamp=datetime.now(timezone.utc))
         for t,c in rules: e.add_field(name=t,value=c,inline=False)
+        await interaction.response.defer(ephemeral=True)
         await interaction.channel.send(embed=e,view=RulesView() if avec_bouton else None)
-        await interaction.response.send_message(embed=ok("Règlement envoyé !"),ephemeral=True)
+        await interaction.followup.send(embed=ok("Règlement envoyé !"),ephemeral=True)
 
 @bot.tree.command(name="verification",description="Panel de vérification")
 @app_commands.describe(role="Rôle à donner",titre="Titre",description="Description")
@@ -1272,42 +1281,23 @@ async def verification(interaction:discord.Interaction,role:discord.Role=None,ti
               await interaction.guild.create_role(name="✅ Vérifié",color=discord.Color.green()))
     bot.verif_roles[gid]=role.id
     e=mke(f"{T.SHIELD}  {titre}",f"{description}\n\n**Rôle :** {role.mention}",T.BLURPLE)
+    await interaction.response.defer(ephemeral=True)
     await interaction.channel.send(embed=e,view=VerifyView())
-    await interaction.response.send_message(embed=ok("Panel créé !"),ephemeral=True)
+    await interaction.followup.send(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="arrivee",description="Configurer le salon des messages de bienvenue")
-@app_commands.describe(salon_id="ID ou mention du salon (copie l'ID avec clic droit)")
+@app_commands.describe(salon="Le salon où envoyer les messages de bienvenue")
 @app_commands.default_permissions(administrator=True)
-async def arrivee(interaction:discord.Interaction,salon_id:str):
-    gid=str(interaction.guild.id)
-    # Nettoyer l'ID (accepte mention <#123> ou ID brut)
-    clean=salon_id.strip().replace("<#","").replace(">","")
-    try:
-        ch=interaction.guild.get_channel(int(clean))
-        if not ch: ch=await interaction.guild.fetch_channel(int(clean))
-    except Exception:
-        # Chercher par nom
-        ch=discord.utils.find(lambda c: c.name==salon_id.strip(), interaction.guild.text_channels)
-    if not ch:
-        return await interaction.response.send_message(embed=er("Salon introuvable","Utilise l'ID du salon (clic droit → Copier l'identifiant)."),ephemeral=True)
-    bot.arrivee_channels[gid]=ch.id
-    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Dans {ch.mention}"))
+async def arrivee(interaction:discord.Interaction,salon:discord.TextChannel):
+    bot.arrivee_channels[str(interaction.guild.id)]=salon.id
+    await interaction.response.send_message(embed=ok("Arrivées configurées",f"Salon : {salon.mention}"))
 
 @bot.tree.command(name="depart",description="Configurer le salon des messages de départ")
-@app_commands.describe(salon_id="ID ou mention du salon (copie l'ID avec clic droit)")
+@app_commands.describe(salon="Le salon où envoyer les messages de départ")
 @app_commands.default_permissions(administrator=True)
-async def depart(interaction:discord.Interaction,salon_id:str):
-    gid=str(interaction.guild.id)
-    clean=salon_id.strip().replace("<#","").replace(">","")
-    try:
-        ch=interaction.guild.get_channel(int(clean))
-        if not ch: ch=await interaction.guild.fetch_channel(int(clean))
-    except Exception:
-        ch=discord.utils.find(lambda c: c.name==salon_id.strip(), interaction.guild.text_channels)
-    if not ch:
-        return await interaction.response.send_message(embed=er("Salon introuvable","Utilise l'ID du salon (clic droit → Copier l'identifiant)."),ephemeral=True)
-    bot.depart_channels[gid]=ch.id
-    await interaction.response.send_message(embed=ok("Départs configurés",f"Dans {ch.mention}"))
+async def depart(interaction:discord.Interaction,salon:discord.TextChannel):
+    bot.depart_channels[str(interaction.guild.id)]=salon.id
+    await interaction.response.send_message(embed=ok("Départs configurés",f"Salon : {salon.mention}"))
 
 @bot.tree.command(name="giveaway",description="Créer un giveaway")
 @app_commands.describe(titre="Titre",prix="Prix",duree_heures="Durée en heures",gagnants="Gagnants")
@@ -1448,7 +1438,8 @@ async def setup(interaction:discord.Interaction,style:str="communaute"):
     g=interaction.guild; cfg=SETUPS[style]; created={"roles":0,"text":0,"voice":0}
     for name,color in cfg["roles"]:
         if not discord.utils.get(g.roles,name=name):
-            try: await g.create_role(name=name,color=discord.Color(color)); created["roles"]+=1; await asyncio.sleep(0.3)
+            try: await g.create_role(name=name,color=discord.Color(color)); created["roles"]+=1; await asyncio.sleep(0.4)
+            except discord.Forbidden: pass  # Bot n'a pas manage_roles
             except Exception: pass
     for cat_name,(texts,voices) in cfg["structure"].items():
         cat=discord.utils.get(g.categories,name=cat_name)
@@ -1572,19 +1563,14 @@ async def tempvoice(interaction:discord.Interaction,salon:discord.VoiceChannel):
     await interaction.response.send_message(embed=ok("Vocaux temporaires",f"Rejoins **{salon.name}** pour créer ton salon !"))
 
 # ── DM All ──
-@bot.tree.command(name="dmall",description="Envoyer un DM à tous les membres [Owner uniquement]")
+@bot.tree.command(name="dmall",description="Envoyer un DM à tous les membres du serveur")
 @app_commands.describe(message="Le message à envoyer en DM")
+@app_commands.default_permissions(administrator=True)
 async def dmall(interaction:discord.Interaction,message:str):
-    if BOT_OWNER_ID == 0:
-        return await interaction.response.send_message(
-            embed=er("BOT_OWNER_ID non configuré",
-                     "Ajoute **BOT_OWNER_ID** dans Railway → Variables avec ton ID Discord.\n"
-                     "Pour trouver ton ID : Active le mode développeur dans Discord → clic droit sur toi → Copier l'identifiant."),
-            ephemeral=True)
-    if not is_owner(interaction.user.id):
-        return await interaction.response.send_message(embed=er("Accès refusé","Réservé au propriétaire du bot."),ephemeral=True)
     await interaction.response.defer(ephemeral=True)
-    guild=interaction.guild; members=[m for m in guild.members if not m.bot]; total=len(members)
+    guild=interaction.guild
+    members=[m for m in guild.members if not m.bot]
+    total=len(members)
     await interaction.followup.send(embed=inf("📨  DM en cours...",f"Envoi à **{total}** membres..."),ephemeral=True)
     e_dm=discord.Embed(title=f"📨  Message de {guild.name}",description=message,color=T.BLURPLE,timestamp=datetime.now(timezone.utc))
     e_dm.set_footer(text=f"Envoyé depuis {guild.name}")
@@ -1595,6 +1581,7 @@ async def dmall(interaction:discord.Interaction,message:str):
         except Exception: failed+=1
         await asyncio.sleep(1.2)
     await interaction.edit_original_response(embed=ok("DM envoyés !",f"**Envoyés :** {sent}\n**Échoués :** {failed}\n**Total :** {total}"))
+
 
 # ==================== RUN ====================
 if __name__=="__main__":

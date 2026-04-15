@@ -127,8 +127,12 @@ async def log(guild, title, desc, color=C.BLUE):
 
 def can_target(actor: discord.Member, target: discord.Member) -> bool:
     """Vérifie qu'on peut agir sur la cible."""
+    if not actor or not target: return False
     if target.id == actor.guild.owner_id: return False
-    if actor.top_role <= target.top_role: return False
+    if target.id == target.guild.me.id: return False  # pas le bot lui-même
+    ar = actor.top_role; tr = target.top_role
+    if ar is None or tr is None: return True  # pas de rôle = on peut agir
+    if ar <= tr: return False
     return True
 
 # ─── Groq IA ──────────────────────────────────────────────────────────────────
@@ -795,8 +799,8 @@ async def ping(i: discord.Interaction):
 async def dire(i: discord.Interaction, message: str, salon: Optional[discord.TextChannel]=None):
     target=salon or i.channel
     perms=target.permissions_for(i.guild.me)
-    if not perms.send_messages:
-        return await i.response.send_message(embed=er("Permission manquante",f"Je ne peux pas envoyer dans {target.mention}."),ephemeral=True)
+    if not perms.view_channel or not perms.send_messages:
+        return await i.response.send_message(embed=er("Permission manquante",f"Je n'ai pas accès au salon {target.mention}. Vérifie les permissions du bot."),ephemeral=True)
     await i.response.defer(ephemeral=True)
     await target.send(message)
     await i.followup.send(embed=ok("Envoyé",f"Dans {target.mention}"),ephemeral=True)
@@ -808,8 +812,8 @@ async def dire(i: discord.Interaction, message: str, salon: Optional[discord.Tex
 async def embed_cmd(i: discord.Interaction, titre: str, contenu: str, couleur: str="#5865F2", salon: Optional[discord.TextChannel]=None):
     target=salon or i.channel
     perms=target.permissions_for(i.guild.me)
-    if not perms.send_messages or not perms.embed_links:
-        return await i.response.send_message(embed=er("Permission manquante",f"Je ne peux pas envoyer d'embed dans {target.mention}."),ephemeral=True)
+    if not perms.view_channel or not perms.send_messages or not perms.embed_links:
+        return await i.response.send_message(embed=er("Permission manquante",f"Je n'ai pas accès à {target.mention}. Vérifie les permissions du bot dans ce salon."),ephemeral=True)
     try: color=int(couleur.replace("#",""),16)
     except: color=C.BLUE
     await i.response.defer(ephemeral=True)
@@ -876,6 +880,8 @@ async def dmall(i: discord.Interaction, message: str):
     await i.response.defer(ephemeral=True)
     members=[m for m in i.guild.members if not m.bot]
     total=len(members)
+    if total==0:
+        return await i.followup.send(embed=er("Aucun membre trouvé","Server Members Intent pas activé. Va sur discord.com/developers → Bot → active les 3 Privileged Gateway Intents → sauvegarde → redémarre Railway."),ephemeral=True)
     await i.followup.send(embed=inf("📨  DM en cours...",f"Envoi à **{total}** membres..."),ephemeral=True)
     e_dm=discord.Embed(title=f"📨  Message de {i.guild.name}",description=message,color=C.BLUE,timestamp=datetime.now(timezone.utc))
     e_dm.set_footer(text=f"Envoyé depuis {i.guild.name}")
@@ -1126,19 +1132,27 @@ async def supprimersalon(i: discord.Interaction, salon: discord.TextChannel):
 @app_commands.default_permissions(manage_channels=True)
 async def lock(i: discord.Interaction, salon: Optional[discord.TextChannel]=None, lecture: bool=False):
     target=salon or i.channel
-    ow=target.overwrites_for(i.guild.default_role)
-    ow.send_messages=False
-    if lecture: ow.view_channel=False
-    await target.set_permissions(i.guild.default_role,overwrite=ow)
-    await i.response.send_message(embed=emb("🔒  Verrouillé",target.mention,C.RED))
+    await i.response.defer(ephemeral=True)
+    try:
+        ow=target.overwrites_for(i.guild.default_role)
+        ow.send_messages=False
+        if lecture: ow.view_channel=False
+        await target.set_permissions(i.guild.default_role,overwrite=ow)
+        await i.followup.send(embed=emb("🔒  Verrouillé",target.mention,C.RED))
+    except discord.Forbidden:
+        await i.followup.send(embed=er("Permission manquante","Je n'ai pas la permission de modifier ce salon."))
 
 @bot.tree.command(name="unlock",description="Déverrouiller un salon")
 @app_commands.describe(salon="Salon (vide = actuel)")
 @app_commands.default_permissions(manage_channels=True)
 async def unlock(i: discord.Interaction, salon: Optional[discord.TextChannel]=None):
     target=salon or i.channel
-    await target.set_permissions(i.guild.default_role,send_messages=True,view_channel=True)
-    await i.response.send_message(embed=ok("Déverrouillé",target.mention))
+    await i.response.defer(ephemeral=True)
+    try:
+        await target.set_permissions(i.guild.default_role,send_messages=True,view_channel=True)
+        await i.followup.send(embed=ok("Déverrouillé",target.mention))
+    except discord.Forbidden:
+        await i.followup.send(embed=er("Permission manquante","Je n'ai pas la permission de modifier ce salon."))
 
 @bot.tree.command(name="slowmode",description="Mode lent sur un salon spécifique")
 @app_commands.describe(secondes="Délai en secondes (0 = désactiver)",salon="Salon cible (vide = actuel)")
@@ -1167,8 +1181,13 @@ async def creerole(i: discord.Interaction, nom: str, couleur: str="#5865F2"):
 @app_commands.describe(membre="Le membre",role="Le rôle")
 @app_commands.default_permissions(manage_roles=True)
 async def addrole(i: discord.Interaction, membre: discord.Member, role: discord.Role):
-    await membre.add_roles(role)
-    await i.response.send_message(embed=ok("Rôle ajouté",f"{role.mention} → {membre.mention}"))
+    try:
+        await membre.add_roles(role)
+        await i.response.send_message(embed=ok("Rôle ajouté",f"{role.mention} → {membre.mention}"))
+    except discord.Forbidden:
+        await i.response.send_message(embed=er("Permission manquante","Le rôle du bot doit être plus haut que le rôle à attribuer."),ephemeral=True)
+    except Exception as e:
+        await i.response.send_message(embed=er("Erreur",str(e)[:100]),ephemeral=True)
 
 @bot.tree.command(name="removerole",description="Retirer un rôle d'un membre")
 @app_commands.describe(membre="Le membre",role="Le rôle")
@@ -1280,18 +1299,49 @@ async def verification(i: discord.Interaction, role: Optional[discord.Role]=None
     await i.followup.send(embed=ok("Panel créé !"),ephemeral=True)
 
 @bot.tree.command(name="arrivee",description="Configurer le salon des messages de bienvenue")
-@app_commands.describe(salon="Salon bienvenue")
+@app_commands.describe(salon_id="ID du salon (clic droit sur le salon → Copier l'identifiant)")
 @app_commands.default_permissions(administrator=True)
-async def arrivee(i: discord.Interaction, salon: discord.TextChannel):
-    bot.arrivee[str(i.guild.id)]=salon.id
-    await i.response.send_message(embed=ok("Arrivées configurées",f"Salon : {salon.mention}"))
+async def arrivee(i: discord.Interaction, salon_id: str):
+    # Nettoyer l'ID (accepte <#123> ou 123)
+    clean = salon_id.strip().replace("<#","").replace(">","").strip()
+    try:
+        ch = i.guild.get_channel(int(clean)) or await i.guild.fetch_channel(int(clean))
+    except Exception:
+        return await i.response.send_message(embed=er("ID invalide",
+            f"Utilise l'ID numérique du salon.
+**Comment trouver l'ID :**
+"
+            f"1. Active le mode développeur (Paramètres → Avancé)
+"
+            f"2. Clic droit sur le salon → **Copier l'identifiant**
+"
+            f"3. Colle l'ID ici"),ephemeral=True)
+    if not ch:
+        return await i.response.send_message(embed=er("Salon introuvable","Vérifie l'ID."),ephemeral=True)
+    bot.arrivee[str(i.guild.id)]=ch.id
+    await i.response.send_message(embed=ok("Arrivées configurées",f"Salon : {ch.mention}"))
 
 @bot.tree.command(name="depart",description="Configurer le salon des messages de départ")
-@app_commands.describe(salon="Salon départ")
+@app_commands.describe(salon_id="ID du salon (clic droit sur le salon → Copier l'identifiant)")
 @app_commands.default_permissions(administrator=True)
-async def depart(i: discord.Interaction, salon: discord.TextChannel):
-    bot.depart_ch[str(i.guild.id)]=salon.id
-    await i.response.send_message(embed=ok("Départs configurés",f"Salon : {salon.mention}"))
+async def depart(i: discord.Interaction, salon_id: str):
+    clean = salon_id.strip().replace("<#","").replace(">","").strip()
+    try:
+        ch = i.guild.get_channel(int(clean)) or await i.guild.fetch_channel(int(clean))
+    except Exception:
+        return await i.response.send_message(embed=er("ID invalide",
+            f"Utilise l'ID numérique du salon.
+**Comment trouver l'ID :**
+"
+            f"1. Active le mode développeur (Paramètres → Avancé)
+"
+            f"2. Clic droit sur le salon → **Copier l'identifiant**
+"
+            f"3. Colle l'ID ici"),ephemeral=True)
+    if not ch:
+        return await i.response.send_message(embed=er("Salon introuvable","Vérifie l'ID."),ephemeral=True)
+    bot.depart_ch[str(i.guild.id)]=ch.id
+    await i.response.send_message(embed=ok("Départs configurés",f"Salon : {ch.mention}"))
 
 @bot.tree.command(name="giveaway",description="Créer un giveaway")
 @app_commands.describe(titre="Titre",prix="Prix",heures="Durée en heures",gagnants="Nombre de gagnants")
@@ -1304,6 +1354,9 @@ async def giveaway(i: discord.Interaction, titre: str, prix: str, heures: int, g
     e.add_field(name="🌟 Participants",value="**0**",inline=True)
     e.add_field(name="⏰ Fin",value=f"<t:{int(end.timestamp())}:R>",inline=True)
     e.set_footer(text=f"Organisé par {i.user.display_name}")
+    perms=i.channel.permissions_for(i.guild.me)
+    if not perms.view_channel or not perms.send_messages or not perms.embed_links:
+        return await i.followup.send(embed=er("Permission manquante","Je n'ai pas accès à ce salon."),ephemeral=True)
     msg=await i.channel.send(embed=e); mid=str(msg.id)
     bot.giveaways[mid]={"title":titre,"prize":prix,"winners":gagnants,"end":end.isoformat(),
                         "cid":str(i.channel.id),"gid":str(i.guild.id),"p":[],"ended":False}
@@ -1470,10 +1523,20 @@ async def setup(i: discord.Interaction, style: str="communaute"):
 async def backup(i: discord.Interaction, nom: Optional[str]=None):
     await i.response.defer(ephemeral=True)
     g=i.guild; name=nom or f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    data={"roles":[{"name":r.name,"color":r.color.value} for r in g.roles if r.name!="@everyone" and not r.managed],
-          "cats":[{"name":c.name} for c in g.categories],
-          "text":[{"name":c.name,"cat":c.category.name if c.category else None} for c in g.text_channels],
-          "voice":[{"name":c.name,"cat":c.category.name if c.category else None} for c in g.voice_channels]}
+    # Forcer le rechargement depuis Discord si le cache est vide
+    roles  = g.roles         or []
+    cats   = g.categories    or []
+    texts  = g.text_channels or []
+    voices = g.voice_channels or []
+    data={"roles":[{"name":r.name,"color":r.color.value} for r in roles if r.name!="@everyone" and not r.managed],
+          "cats":[{"name":c.name} for c in cats],
+          "text":[{"name":c.name,"cat":c.category.name if c.category else None} for c in texts],
+          "voice":[{"name":c.name,"cat":c.category.name if c.category else None} for c in voices]}
+    if not data["roles"] and not data["text"]:
+        return await i.followup.send(embed=er("Cache vide",
+            "Active **Server Members Intent** ET **Guilds Intent** dans le portail développeur Discord.
+"
+            "discord.com/developers → ton bot → Bot → Active les 3 Privileged Intents."),ephemeral=True)
     bot.backups.setdefault(str(g.id),{})[name]=data
     await i.followup.send(embed=ok("Sauvegarde créée",f"**{name}**\nRôles : {len(data['roles'])} | Salons : {len(data['text'])+len(data['voice'])}"),ephemeral=True)
 

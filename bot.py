@@ -147,7 +147,7 @@ async def ask_groq(q: str) -> str:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
                 r = await s.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    json={"model":"mixtral-8x7b-32768",
+                    json={"model":"llama3-70b-8192",
                           "messages":[{"role":"system","content":AI_SYS},
                                       {"role":"user","content":q[:500]}],
                           "max_tokens":200},
@@ -749,7 +749,7 @@ async def on_message(message: discord.Message):
         await add_xp(message)
     # IA
     bot_mentioned = bot.user in (message.mentions or [])
-    name_mentioned = "aegis" in message.content.lower()
+    name_mentioned = "aegis" in message.content.lower() and not bot_mentioned
     if message.guild and (bot_mentioned or name_mentioned):
         uid=message.author.id; now=datetime.now(timezone.utc)
         last=bot.ai_cd.get(uid)
@@ -1307,15 +1307,7 @@ async def arrivee(i: discord.Interaction, salon_id: str):
     try:
         ch = i.guild.get_channel(int(clean)) or await i.guild.fetch_channel(int(clean))
     except Exception:
-        return await i.response.send_message(embed=er("ID invalide",
-            f"Utilise l'ID numérique du salon.
-**Comment trouver l'ID :**
-"
-            f"1. Active le mode développeur (Paramètres → Avancé)
-"
-            f"2. Clic droit sur le salon → **Copier l'identifiant**
-"
-            f"3. Colle l'ID ici"),ephemeral=True)
+        return await i.response.send_message(embed=er("ID invalide","Utilise l'ID numerique. Mode dev → clic droit sur salon → Copier l'identifiant."),ephemeral=True)
     if not ch:
         return await i.response.send_message(embed=er("Salon introuvable","Vérifie l'ID."),ephemeral=True)
     bot.arrivee[str(i.guild.id)]=ch.id
@@ -1329,15 +1321,7 @@ async def depart(i: discord.Interaction, salon_id: str):
     try:
         ch = i.guild.get_channel(int(clean)) or await i.guild.fetch_channel(int(clean))
     except Exception:
-        return await i.response.send_message(embed=er("ID invalide",
-            f"Utilise l'ID numérique du salon.
-**Comment trouver l'ID :**
-"
-            f"1. Active le mode développeur (Paramètres → Avancé)
-"
-            f"2. Clic droit sur le salon → **Copier l'identifiant**
-"
-            f"3. Colle l'ID ici"),ephemeral=True)
+        return await i.response.send_message(embed=er("ID invalide","Utilise l'ID numerique. Mode dev → clic droit sur salon → Copier l'identifiant."),ephemeral=True)
     if not ch:
         return await i.response.send_message(embed=er("Salon introuvable","Vérifie l'ID."),ephemeral=True)
     bot.depart_ch[str(i.guild.id)]=ch.id
@@ -1533,10 +1517,7 @@ async def backup(i: discord.Interaction, nom: Optional[str]=None):
           "text":[{"name":c.name,"cat":c.category.name if c.category else None} for c in texts],
           "voice":[{"name":c.name,"cat":c.category.name if c.category else None} for c in voices]}
     if not data["roles"] and not data["text"]:
-        return await i.followup.send(embed=er("Cache vide",
-            "Active **Server Members Intent** ET **Guilds Intent** dans le portail développeur Discord.
-"
-            "discord.com/developers → ton bot → Bot → Active les 3 Privileged Intents."),ephemeral=True)
+        return await i.followup.send(embed=er("Intents manquants","Active les 3 Privileged Gateway Intents sur discord.com/developers → ton bot → Bot."),ephemeral=True)
     bot.backups.setdefault(str(g.id),{})[name]=data
     await i.followup.send(embed=ok("Sauvegarde créée",f"**{name}**\nRôles : {len(data['roles'])} | Salons : {len(data['text'])+len(data['voice'])}"),ephemeral=True)
 

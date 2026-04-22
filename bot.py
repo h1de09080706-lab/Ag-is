@@ -508,7 +508,7 @@ class TicketView(discord.ui.View):
 class TicketBtn(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Ouvrir un ticket", style=discord.ButtonStyle.blurple,
-                         custom_id="ticket_open", emoji="⊠")
+                         custom_id="ticket_open", emoji="🎫")
     async def callback(self, i: discord.Interaction):
         gid = str(i.guild.id); cfg = bot.ticket_cfg.get(gid, {})
         name = f"ticket-{i.user.name.lower()[:20]}"
@@ -591,7 +591,7 @@ class RulesView(discord.ui.View):
 class ApplyView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Postuler", style=discord.ButtonStyle.success,
-                       custom_id="apply", emoji="📝")
+                       custom_id="apply")
     async def apply(self, i: discord.Interaction, b: discord.ui.Button):
         await i.response.send_modal(ApplyModal())
 
@@ -631,7 +631,7 @@ class SuggView(discord.ui.View):
 
 class RoleMenu(discord.ui.Select):
     def __init__(self, roles):
-        opts = [discord.SelectOption(label=r.name, value=str(r.id), emoji="◉") for r in roles[:25]]
+        opts = [discord.SelectOption(label=r.name, value=str(r.id), emoji="📝") for r in roles[:25]]
         super().__init__(placeholder="Choisis tes rôles...", min_values=0,
                          max_values=len(opts), options=opts, custom_id="rolemenu")
     async def callback(self, i: discord.Interaction):
@@ -737,16 +737,23 @@ async def on_ready():
         type=discord.ActivityType.watching, name="◈ /aide | AEGIS V2.1"))
     try:
         await bot.application.edit(description=(
-            "◈ AEGIS V2.1 — Système de protection avancée\n\n"
-            "Anti-nuke ◈ Anti-raid ◈ Anti-spam ◈ XP ◈ Musique ◈ IA\n"
-            "Tickets ◈ Giveaway ◈ Sondages ◈ Modération complète\n\n"
-            "Support : https://discord.gg/6rN8pneGdy"
+            "AEGIS V2.1 — Systeme de protection avance\n\n"
+            "Anti-nuke, Anti-raid, Anti-spam, XP, Musique, IA\n"
+            "Tickets, Giveaway, Sondages, Moderation complete\n\n"
+            "Support : https://discord.gg/6rN8pneGdy\n"
+            "Invite avec admin (requis) :\n"
+            "discord.com/oauth2/authorize?client_id=1405641065989406773&permissions=8&scope=bot+applications.commands"
         ))
     except Exception as e: logger.warning(f"Bio: {e}")
+
+# Guard pour on_guild_join (anti-doublon Railway)
+_joined_guilds: set = set()
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
     """Message de bienvenue + activation automatique des protections quand Aegis rejoint un serveur."""
+    if guild.id in _joined_guilds: return
+    _joined_guilds.add(guild.id)
     gid = str(guild.id)
     # Activer automatiquement les protections par défaut
     if gid not in bot.raid_cfg:  bot.raid_cfg[gid]  = default_raid_cfg()
@@ -1462,11 +1469,18 @@ async def autorole(i: discord.Interaction, action: str="add",
 @app_commands.describe(titre="Titre du menu", roles="Mentions des rôles")
 @app_commands.default_permissions(administrator=True)
 async def rolemenu(i: discord.Interaction, titre: str, roles: str):
-    ids  = re.findall(r'<@&(\d+)>', roles)
+    # Accepter mentions <@&123> ET IDs bruts
+    ids = re.findall(r'<@&(\d+)>', roles) or re.findall(r'\b(\d{17,20})\b', roles)
     objs = [i.guild.get_role(int(x)) for x in ids if i.guild.get_role(int(x))]
+    # Si toujours vide, chercher par nom
+    if not objs:
+        for word in roles.split():
+            word = word.strip().lstrip('@')
+            r = discord.utils.get(i.guild.roles, name=word)
+            if r and r not in objs: objs.append(r)
     if not objs:
         return await i.response.send_message(
-            embed=er("Erreur", "Utilise des mentions de rôles (@Rôle)."), ephemeral=True)
+            embed=er("Erreur", "Aucun rôle trouvé. Essaie de mentionner le rôle directement avec @Rôle dans le champ."), ephemeral=True)
     e = emb(f"◉  {titre}", "\n".join([f"◈ {r.mention}" for r in objs]), C.NEON_PINK)
     if not check_perms(i.channel, i.guild.me):
         return await i.response.send_message(embed=er("Accès refusé",

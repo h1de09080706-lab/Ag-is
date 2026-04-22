@@ -747,13 +747,15 @@ async def on_ready():
     except Exception as e: logger.warning(f"Bio: {e}")
 
 # Guard pour on_guild_join (anti-doublon Railway)
-_joined_guilds: set = set()
+_joined_guilds: dict = {}  # {guild_id: timestamp}
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
     """Message de bienvenue + activation automatique des protections quand Aegis rejoint un serveur."""
-    if guild.id in _joined_guilds: return
-    _joined_guilds.add(guild.id)
+    now = datetime.now(timezone.utc)
+    last = _joined_guilds.get(guild.id)
+    if last and (now - last).total_seconds() < 60: return  # 60s de cooldown
+    _joined_guilds[guild.id] = now
     gid = str(guild.id)
     # Activer automatiquement les protections par défaut
     if gid not in bot.raid_cfg:  bot.raid_cfg[gid]  = default_raid_cfg()
@@ -804,7 +806,7 @@ async def on_member_join(member: discord.Member):
     # Guard anti-doublon (Railway overlap)
     key = f"{gid}-{member.id}"
     last = bot._join_cache.get(key)
-    if last and (now - last).total_seconds() < 5: return
+    if last and (now - last).total_seconds() < 30: return
     bot._join_cache[key] = now
     # Nettoyer le cache
     if len(bot._join_cache) > 500:
@@ -851,7 +853,7 @@ async def on_member_remove(member: discord.Member):
     # Guard anti-doublon
     key = f"{gid}-{member.id}"
     last = bot._remove_cache.get(key)
-    if last and (now - last).total_seconds() < 5: return
+    if last and (now - last).total_seconds() < 30: return
     bot._remove_cache[key] = now
     if len(bot._remove_cache) > 500:
         bot._remove_cache.clear()

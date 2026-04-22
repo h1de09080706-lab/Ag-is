@@ -159,6 +159,11 @@ async def log(guild, title, desc, color=C.NEON_CYAN):
             try: await ch.send(embed=emb(f"◈  {title}", desc, color))
             except: pass
 
+def check_perms(channel, guild_me) -> bool:
+    """Vérifie que le bot peut envoyer un embed dans ce salon."""
+    perms = channel.permissions_for(guild_me)
+    return perms.view_channel and perms.send_messages and perms.embed_links
+
 def default_raid_cfg():  return {"enabled": True,  "threshold": 5,  "action": "kick"}
 def default_spam_cfg():  return {"enabled": True,  "limit": 5, "window": 5, "mentions": 5, "action": "mute", "dur": 5}
 def default_nuke_cfg():  return {"enabled": True,  "threshold": 5,  "action": "kick", "whitelist": []}
@@ -1463,6 +1468,9 @@ async def rolemenu(i: discord.Interaction, titre: str, roles: str):
         return await i.response.send_message(
             embed=er("Erreur", "Utilise des mentions de rôles (@Rôle)."), ephemeral=True)
     e = emb(f"◉  {titre}", "\n".join([f"◈ {r.mention}" for r in objs]), C.NEON_PINK)
+    if not check_perms(i.channel, i.guild.me):
+        return await i.response.send_message(embed=er("Accès refusé",
+            f"Je n'ai pas accès à {i.channel.mention}. Vérifie les permissions du rôle Aegis."), ephemeral=True)
     await i.response.defer(ephemeral=True)
     await i.channel.send(embed=e, view=RoleMenuView(objs))
     await i.followup.send(embed=ok("Menu créé !"), ephemeral=True)
@@ -1475,6 +1483,8 @@ async def panel(i: discord.Interaction, titre: str="Support",
                 description: str="Clique pour ouvrir un ticket.",
                 role_support: Optional[discord.Role]=None):
     bot.ticket_cfg[str(i.guild.id)] = {"sr": role_support.id if role_support else None}
+    if not check_perms(i.channel, i.guild.me):
+        return await i.response.send_message(embed=er("Acces refuse","Je n'ai pas acces a ce salon. Verifie les permissions du role Aegis dans les parametres du serveur."),ephemeral=True)
     await i.response.defer(ephemeral=True)
     await i.channel.send(embed=emb(f"⊠  {titre}", description, C.NEON_CYAN), view=TicketView())
     await i.followup.send(embed=ok("Panel créé !"), ephemeral=True)
@@ -1490,6 +1500,9 @@ async def reglement(i: discord.Interaction, type_reglement: str="def",
     if type_reglement == "custom":
         return await i.response.send_modal(ReglModal(avec_bouton, role))
     if role: bot.verif_roles[str(i.guild.id)] = role.id
+    if not check_perms(i.channel, i.guild.me):
+        return await i.response.send_message(embed=er("Accès refusé",
+            f"Je n'ai pas accès à {i.channel.mention}. Vérifie les permissions du rôle Aegis."), ephemeral=True)
     rules = [
         ("◈  Respect",    "Respecte tous les membres et le staff."),
         ("◈  Anti-spam",  "Évite de répéter les mêmes messages."),
@@ -1518,6 +1531,9 @@ async def verification(i: discord.Interaction, role: Optional[discord.Role]=None
                 return await i.response.send_message(
                     embed=er("Erreur", "Je n'ai pas pu créer le rôle. Vérifie mes permissions."), ephemeral=True)
     bot.verif_roles[gid] = role.id
+    if not check_perms(i.channel, i.guild.me):
+        return await i.response.send_message(embed=er("Accès refusé",
+            f"Je n'ai pas accès à {i.channel.mention}. Vérifie les permissions du rôle Aegis."), ephemeral=True)
     e = emb(f"◈  {titre}", f"{description}\n\n**Rôle :** {role.mention}", C.NEON_CYAN)
     await i.response.defer(ephemeral=True)
     await i.channel.send(embed=e, view=VerifyView())

@@ -17,6 +17,9 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from collections import defaultdict
 
+# Lock global anti-doublon (bloque Railway overlap)
+_event_lock = asyncio.Lock()
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('Aegis')
 
@@ -737,12 +740,12 @@ async def on_ready():
         type=discord.ActivityType.watching, name="◈ /aide | AEGIS V2.1"))
     try:
         await bot.application.edit(description=(
-            "AEGIS V2.1 — Systeme de protection avance\n\n"
-            "Anti-nuke, Anti-raid, Anti-spam, XP, Musique, IA\n"
-            "Tickets, Giveaway, Sondages, Moderation complete\n\n"
-            "Support : https://discord.gg/6rN8pneGdy\n"
-            "Invite avec admin (requis) :\n"
-            "discord.com/oauth2/authorize?client_id=1405641065989406773&permissions=8&scope=bot+applications.commands"
+            "AEGIS V2.1 — Bot Discord multifonction\n\n"
+            "Protection : Anti-nuke, Anti-raid, Anti-spam\n"
+            "Fonctions : XP, Musique, IA Groq, Tickets, Giveaway, Sondages\n\n"
+            "Support : https://discord.gg/6rN8pneGdy\n\n"
+            "Pour m'ajouter a votre serveur, utilisez ce lien :\n"
+            "https://discord.com/oauth2/authorize?client_id=1405641065989406773&permissions=8&integration_type=0&scope=bot"
         ))
     except Exception as e: logger.warning(f"Bio: {e}")
 
@@ -803,12 +806,12 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_member_join(member: discord.Member):
     gid = str(member.guild.id); now = datetime.now(timezone.utc)
-    # Guard anti-doublon (Railway overlap)
-    key = f"{gid}-{member.id}"
-    last = bot._join_cache.get(key)
-    if last and (now - last).total_seconds() < 30: return
-    bot._join_cache[key] = now
-    # Nettoyer le cache
+    # Guard anti-doublon strict (Railway overlap)
+    key = f"join-{gid}-{member.id}"
+    async with _event_lock:
+        last = bot._join_cache.get(key)
+        if last and (now - last).total_seconds() < 30: return
+        bot._join_cache[key] = now
     if len(bot._join_cache) > 500:
         bot._join_cache.clear()
     # Anti-raid
@@ -850,11 +853,11 @@ async def on_member_join(member: discord.Member):
 @bot.event
 async def on_member_remove(member: discord.Member):
     gid = str(member.guild.id); now = datetime.now(timezone.utc)
-    # Guard anti-doublon
-    key = f"{gid}-{member.id}"
-    last = bot._remove_cache.get(key)
-    if last and (now - last).total_seconds() < 30: return
-    bot._remove_cache[key] = now
+    key = f"remove-{gid}-{member.id}"
+    async with _event_lock:
+        last = bot._remove_cache.get(key)
+        if last and (now - last).total_seconds() < 30: return
+        bot._remove_cache[key] = now
     if len(bot._remove_cache) > 500:
         bot._remove_cache.clear()
     if gid in bot.depart_ch:
@@ -984,10 +987,17 @@ async def dire(i: discord.Interaction, message: str, salon: Optional[discord.Tex
     await i.followup.send(embed=ok("Envoyé", f"Dans {target.mention}"), ephemeral=True)
 
 @bot.tree.command(name="embed", description="Envoyer un embed personnalisé")
-@app_commands.describe(titre="Titre", contenu="Contenu", couleur="Couleur hex", salon="Salon cible")
+@app_commands.describe(
+    titre="Titre de l'embed",
+    contenu="Contenu de l'embed",
+    couleur="Couleur hex (ex: #FF00FF)",
+    salon="Salon cible (vide = actuel)",
+    image="URL d'une image ou GIF à afficher (optionnel)",
+    miniature="URL d'une miniature en haut à droite (optionnel)")
 @app_commands.default_permissions(manage_messages=True)
 async def embed_cmd(i: discord.Interaction, titre: str, contenu: str,
-                    couleur: str="#00FFFF", salon: Optional[discord.TextChannel]=None):
+                    couleur: str="#00FFFF", salon: Optional[discord.TextChannel]=None,
+                    image: Optional[str]=None, miniature: Optional[str]=None):
     target = salon or i.channel
     perms  = target.permissions_for(i.guild.me)
     if not perms.view_channel or not perms.send_messages or not perms.embed_links:
@@ -998,6 +1008,8 @@ async def embed_cmd(i: discord.Interaction, titre: str, contenu: str,
     await i.response.defer(ephemeral=True)
     e = discord.Embed(title=titre, description=contenu, color=color, timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Par {i.user.display_name}  ◈  AEGIS V2.1")
+    if image:      e.set_image(url=image)
+    if miniature:  e.set_thumbnail(url=miniature)
     await target.send(embed=e)
     await i.followup.send(embed=ok("Envoyé !", f"Dans {target.mention}"), ephemeral=True)
 
@@ -1493,16 +1505,25 @@ async def rolemenu(i: discord.Interaction, titre: str, roles: str):
 
 # ── Systèmes ──────────────────────────────────────────────────────────────
 @bot.tree.command(name="panel", description="Créer un panel de tickets")
-@app_commands.describe(titre="Titre", description="Description", role_support="Rôle support")
+@app_commands.describe(
+    titre="Titre du panel",
+    description="Description du panel",
+    role_support="Rôle support (optionnel)",
+    image="URL d'une image ou GIF à afficher dans le panel (optionnel)")
 @app_commands.default_permissions(administrator=True)
 async def panel(i: discord.Interaction, titre: str="Support",
                 description: str="Clique pour ouvrir un ticket.",
-                role_support: Optional[discord.Role]=None):
+                role_support: Optional[discord.Role]=None,
+                image: Optional[str]=None):
     bot.ticket_cfg[str(i.guild.id)] = {"sr": role_support.id if role_support else None}
     if not check_perms(i.channel, i.guild.me):
-        return await i.response.send_message(embed=er("Acces refuse","Je n'ai pas acces a ce salon. Verifie les permissions du role Aegis dans les parametres du serveur."),ephemeral=True)
+        return await i.response.send_message(embed=er("Acces refuse","Je n'ai pas acces a ce salon. Verifie les permissions du role Aegis."),ephemeral=True)
     await i.response.defer(ephemeral=True)
-    await i.channel.send(embed=emb(f"⊠  {titre}", description, C.NEON_CYAN), view=TicketView())
+    e = emb(f"🎫  {titre}", description, C.NEON_CYAN)
+    if image:
+        # Accepter URL directe ou lien Discord/tenor/giphy
+        e.set_image(url=image)
+    await i.channel.send(embed=e, view=TicketView())
     await i.followup.send(embed=ok("Panel créé !"), ephemeral=True)
 
 @bot.tree.command(name="reglement", description="Envoyer le règlement")

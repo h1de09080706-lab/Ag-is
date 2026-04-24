@@ -1909,57 +1909,7 @@ async def tempvoice(i: discord.Interaction, salon: discord.VoiceChannel):
     bot.temp_voices[str(i.guild.id)] = salon.id
     await i.response.send_message(embed=ok("Vocaux temporaires",
         f"Rejoins **{salon.name}** pour créer ton salon automatiquement !"))
-@bot.tree.command(name="admin_panel", description="Panel admin — réservé au propriétaire du bot")
-async def admin_panel(i: discord.Interaction):
-    # Vérification : uniquement BOT_OWNER_ID
-    if BOT_OWNER_ID == 0:
-        return await i.response.send_message(
-            embed=er("BOT_OWNER_ID non configuré",
-                     "Ajoute **BOT_OWNER_ID** dans Railway → Variables avec ton ID Discord.\n"
-                     "Pour trouver ton ID : Mode développeur → clic droit sur toi → Copier l'identifiant."),
-            ephemeral=True)
-    if i.user.id != BOT_OWNER_ID:
-        return await i.response.send_message(
-            embed=er("Accès refusé", "Cette commande est réservée au propriétaire du bot."),
-            ephemeral=True)
 
-    guilds      = bot.guilds
-    total_mem   = sum(g.member_count or 0 for g in guilds)
-    total_bots  = sum(sum(1 for m in g.members if m.bot) for g in guilds if g.members)
-    humans      = max(0, total_mem - total_bots)
-
-    e = discord.Embed(
-        title="◈  AEGIS — Panel Admin",
-        description=(
-            f"**Bot :** {bot.user} (`{bot.user.id}`)\n"
-            f"**Ping :** `{round(bot.latency*1000)} ms`\n"
-            f"─────────────────────\n"
-            f"**Serveurs :** `{len(guilds)}`\n"
-            f"**Membres totaux :** `{total_mem:,}`\n"
-            f"**Humains :** `{humans:,}`\n"
-            f"**Bots :** `{total_bots:,}`\n"
-            f"─────────────────────\n"
-            f"**Sondages actifs :** `{sum(1 for p in bot.polls.values() if not p.get('ended'))}`\n"
-            f"**Giveaways actifs :** `{sum(1 for g in bot.giveaways.values() if not g.get('ended'))}`\n"
-            f"**Vocaux ouverts :** `{len(bot.vc_pool)}`"
-        ),
-        color=C.NEON_PINK,
-        timestamp=datetime.now(timezone.utc)
-    )
-    e.set_thumbnail(url=bot.user.display_avatar.url)
-    e.set_footer(text=f"Consulté par {i.user}  ◈  AEGIS V2.1")
-
-    # Liste des serveurs triés par membres décroissant
-    if guilds:
-        sorted_g = sorted(guilds, key=lambda g: g.member_count or 0, reverse=True)
-        lines = []
-        for idx, g in enumerate(sorted_g[:20], 1):
-            lines.append(f"`{idx}.` **{g.name}** — `{g.member_count or 0}` membres — `{g.id}`")
-        if len(guilds) > 20:
-            lines.append(f"*... et {len(guilds)-20} autre(s)*")
-        e.add_field(name=f"▸ Serveurs ({len(guilds)})", value="\n".join(lines), inline=False)
-
-    await i.response.send_message(embed=e, ephemeral=True)
 # ══════════════════════════════════════════════
 #  RUN
 # ══════════════════════════════════════════════

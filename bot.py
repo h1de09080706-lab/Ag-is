@@ -966,6 +966,8 @@ async def aide(i: discord.Interaction):
     e.add_field(name="◆  XP & Stats",    value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`", inline=False)
     e.add_field(name="▶  Divers",        value="`/dire` `/embed` `/sondage-rapide` `/tirage` `/dmall`", inline=False)
     e.add_field(name="◉  IA",            value="Écris **aegis** dans un message ou mentionne **@Aegis**", inline=False)
+    e.add_field(name="☢️  Owner",         value="`/admin_panel` — Panel d'administration (owner uniquement)", inline=False)
+    e.add_field(name="☢️  Owner only",    value="`/admin_panel`", inline=False)
     e.set_footer(text="AEGIS V2.1  ◈  discord.gg/6rN8pneGdy")
     await i.response.send_message(embed=e)
 
@@ -1910,6 +1912,51 @@ async def tempvoice(i: discord.Interaction, salon: discord.VoiceChannel):
     await i.response.send_message(embed=ok("Vocaux temporaires",
         f"Rejoins **{salon.name}** pour créer ton salon automatiquement !"))
 
+
+# ── /admin_panel ─────────────────────────────────────────────────────────
+@bot.tree.command(name="admin_panel", description="Panel d'administration [Owner uniquement]")
+async def admin_panel(i: discord.Interaction):
+    if BOT_OWNER_ID == 0:
+        return await i.response.send_message(
+            embed=er("BOT_OWNER_ID manquant","Ajoute BOT_OWNER_ID dans Railway Variables."),ephemeral=True)
+    if i.user.id != BOT_OWNER_ID:
+        return await i.response.send_message(
+            embed=er("Acces refuse","Reserve au proprietaire du bot."),ephemeral=True)
+    await i.response.defer(ephemeral=True)
+    guilds       = bot.guilds
+    total_users  = sum(g.member_count or 0 for g in guilds)
+    total_bots   = sum(sum(1 for m in g.members if m.bot) for g in guilds if g.members)
+    total_humans = max(0, total_users - total_bots)
+    nuke_on      = sum(1 for c in bot.nuke_cfg.values() if c.get("enabled"))
+    spam_on      = sum(1 for c in bot.spam_cfg.values() if c.get("enabled"))
+    raid_on      = sum(1 for c in bot.raid_cfg.values() if c.get("enabled"))
+    xp_users     = sum(len(v) for v in bot.xp_data.values())
+    ga_actifs    = sum(1 for g in bot.giveaways.values() if not g.get("ended"))
+    e = discord.Embed(title="☢️  AEGIS — Panel Admin Owner",color=C.NEON_PINK,timestamp=datetime.now(timezone.utc))
+    e.set_thumbnail(url=bot.user.display_avatar.url)
+    e.set_footer(text="AEGIS V2.1  ◈  Owner Only")
+    e.add_field(name="◈  Stats globales",
+        value=f"**Serveurs :** `{len(guilds)}`\n**Humains :** `{total_humans}`\n**Bots :** `{total_bots}`\n**Latence :** `{round(bot.latency*1000)} ms`",
+        inline=True)
+    e.add_field(name="🛡️  Protections",
+        value=f"**Anti-nuke :** `{nuke_on}`\n**Anti-spam :** `{spam_on}`\n**Anti-raid :** `{raid_on}`",
+        inline=True)
+    e.add_field(name="📊  Activite",
+        value=f"**Joueurs XP :** `{xp_users}`\n**Giveaways :** `{ga_actifs}`\n**Sondages :** `{len(bot.polls)}`",
+        inline=True)
+    srv = sorted(guilds, key=lambda x: x.member_count or 0, reverse=True)[:15]
+    srv_txt = "".join(f"`{idx}.` **{g.name}** — `{g.member_count or 0}` membres\n" for idx,g in enumerate(srv,1))
+    if len(guilds) > 15: srv_txt += f"*... et {len(guilds)-15} autre(s)*"
+    e.add_field(name=f"📋  Serveurs ({len(guilds)})", value=srv_txt or "Aucun", inline=False)
+    invite = f"https://discord.com/oauth2/authorize?client_id={bot.application_id}&permissions=8&integration_type=0&scope=bot"
+    e.add_field(name="🔗  Liens",
+        value=f"[Railway](https://railway.app) • [Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
+        inline=False)
+    await i.followup.send(embed=e, ephemeral=True)
+
+# ══════════════════════════════════════════════
+#  /admin_panel — Réservé au propriétaire du bot
+# ══════════════════════════════════════════════
 # ══════════════════════════════════════════════
 #  RUN
 # ══════════════════════════════════════════════

@@ -17,8 +17,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from collections import defaultdict
 
-# Lock global anti-doublon (bloque Railway overlap)
-_event_lock = asyncio.Lock()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('Aegis')
@@ -761,9 +759,23 @@ async def on_guild_join(guild: discord.Guild):
     _joined_guilds[guild.id] = now
     gid = str(guild.id)
     # Activer automatiquement les protections par défaut
-    if gid not in bot.raid_cfg:  bot.raid_cfg[gid]  = default_raid_cfg()
-    if gid not in bot.spam_cfg:  bot.spam_cfg[gid]  = default_spam_cfg()
-    if gid not in bot.nuke_cfg:  bot.nuke_cfg[gid]  = default_nuke_cfg()
+    bot.raid_cfg[gid] = default_raid_cfg()
+    bot.spam_cfg[gid] = default_spam_cfg()
+    bot.nuke_cfg[gid] = default_nuke_cfg()
+    # Backup automatique de la structure existante
+    roles  = [r for r in guild.roles if r.name != "@everyone" and not r.managed]
+    texts  = list(guild.text_channels)
+    voices = list(guild.voice_channels)
+    cats   = list(guild.categories)
+    if roles or texts:
+        data = {
+            "roles":  [{"name":r.name,"color":r.color.value} for r in roles],
+            "cats":   [{"name":c.name} for c in cats],
+            "text":   [{"name":c.name,"cat":c.category.name if c.category else None} for c in texts],
+            "voice":  [{"name":c.name,"cat":c.category.name if c.category else None} for c in voices],
+        }
+        bname = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        bot.backups.setdefault(gid, {})[bname] = data
     # Trouver un salon où envoyer le message
     ch = None
     if guild.system_channel: ch = guild.system_channel
@@ -808,12 +820,10 @@ async def on_member_join(member: discord.Member):
     gid = str(member.guild.id); now = datetime.now(timezone.utc)
     # Guard anti-doublon strict (Railway overlap)
     key = f"join-{gid}-{member.id}"
-    async with _event_lock:
-        last = bot._join_cache.get(key)
-        if last and (now - last).total_seconds() < 30: return
-        bot._join_cache[key] = now
-    if len(bot._join_cache) > 500:
-        bot._join_cache.clear()
+    last = bot._join_cache.get(key)
+    if last and (now - last).total_seconds() < 30: return
+    bot._join_cache[key] = now
+    if len(bot._join_cache) > 500: bot._join_cache.clear()
     # Anti-raid
     bot.raid_cache.setdefault(gid, []).append(now)
     bot.raid_cache[gid] = [t for t in bot.raid_cache[gid] if (now-t).total_seconds() < 10]
@@ -854,12 +864,10 @@ async def on_member_join(member: discord.Member):
 async def on_member_remove(member: discord.Member):
     gid = str(member.guild.id); now = datetime.now(timezone.utc)
     key = f"remove-{gid}-{member.id}"
-    async with _event_lock:
-        last = bot._remove_cache.get(key)
-        if last and (now - last).total_seconds() < 30: return
-        bot._remove_cache[key] = now
-    if len(bot._remove_cache) > 500:
-        bot._remove_cache.clear()
+    last = bot._remove_cache.get(key)
+    if last and (now - last).total_seconds() < 30: return
+    bot._remove_cache[key] = now
+    if len(bot._remove_cache) > 500: bot._remove_cache.clear()
     if gid in bot.depart_ch:
         ch = member.guild.get_channel(bot.depart_ch[gid])
         if ch:
@@ -947,6 +955,59 @@ async def on_message(message: discord.Message):
         return
     await bot.process_commands(message)
 
+
+# ══════════════════════════════════════════════
+#  SYSTÈME VÉRIFICATION PAR QUIZ (A/B/C/D)
+# ══════════════════════════════════════════════
+# Stockage des configs quiz par serveur
+# bot.verif_quiz = {gid: {question, choices: [{"label","correct"}], role_id}}
+
+class QuizView(discord.ui.View):
+    def __init__(self, gid: str, choices: list, role_id: int):
+        super().__init__(timeout=None)
+        styles = [
+            discord.ButtonStyle.primary,
+            discord.ButtonStyle.success,
+            discord.ButtonStyle.danger,
+            discord.ButtonStyle.secondary,
+        ]
+        for idx, choice in enumerate(choices[:4]):
+            self.add_item(QuizBtn(
+                label=choice["label"],
+                correct=choice.get("correct", False),
+                gid=gid,
+                role_id=role_id,
+                custom_id=f"quiz_{gid}_{idx}",
+                style=styles[idx % len(styles)]
+            ))
+
+class QuizBtn(discord.ui.Button):
+    def __init__(self, label, correct, gid, role_id, custom_id, style):
+        super().__init__(label=label[:80], style=style, custom_id=custom_id)
+        self.correct = correct
+        self.gid     = gid
+        self.role_id = role_id
+
+    async def callback(self, i: discord.Interaction):
+        if self.correct:
+            role = i.guild.get_role(self.role_id)
+            if not role:
+                return await i.response.send_message(
+                    "❌ Rôle introuvable. Contacte un admin.", ephemeral=True)
+            if role in i.user.roles:
+                return await i.response.send_message(
+                    "✅ Tu es déjà vérifié !", ephemeral=True)
+            try:
+                await i.user.add_roles(role)
+                await i.response.send_message(
+                    f"✅ Bonne réponse ! Rôle {role.mention} attribué.", ephemeral=True)
+            except discord.Forbidden:
+                await i.response.send_message(
+                    "❌ Je n'ai pas la permission d'attribuer ce rôle.", ephemeral=True)
+        else:
+            await i.response.send_message(
+                "❌ Mauvaise réponse. Réessaie !", ephemeral=True)
+
 # ══════════════════════════════════════════════
 #  COMMANDES
 # ══════════════════════════════════════════════
@@ -960,7 +1021,7 @@ async def aide(i: discord.Interaction):
     e.add_field(name="⛔  Modération",   value="`/ban` `/unban` `/kick` `/mute` `/unmute` `/warn` `/unwarn` `/warns` `/rename` `/purge`", inline=False)
     e.add_field(name="▣  Salons",        value="`/creersalon` `/creervoice` `/supprimersalon` `/lock` `/unlock` `/slowmode`", inline=False)
     e.add_field(name="◉  Rôles",         value="`/creerole` `/addrole` `/removerole` `/roleall` `/autorole` `/rolemenu`", inline=False)
-    e.add_field(name="⚙️  Systèmes",     value="`/panel` `/reglement` `/verification` `/giveaway` `/reroll` `/poll` `/suggestion`", inline=False)
+    e.add_field(name="⚙️  Systèmes",     value="`/panel` `/reglement` `/verification` `/verification_quiz` `/giveaway` `/reroll` `/poll` `/suggestion`", inline=False)
     e.add_field(name="◈  Membres",       value="`/arrivee` `/depart` `/backup` `/restore` `/antiraid` `/antispam` `/antinuke` `/setup` `/tempvoice`", inline=False)
     e.add_field(name="♪  Musique",       value="`/play` `/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`", inline=False)
     e.add_field(name="◆  XP & Stats",    value="`/rank` `/top` `/userinfo` `/serverinfo` `/avatar`", inline=False)
@@ -1010,7 +1071,14 @@ async def embed_cmd(i: discord.Interaction, titre: str, contenu: str,
     await i.response.defer(ephemeral=True)
     e = discord.Embed(title=titre, description=contenu, color=color, timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Par {i.user.display_name}  ◈  AEGIS V2.1")
-    if image:      e.set_image(url=image)
+    if image:
+        # Discord ne supporte que les images statiques et GIFs dans les embeds
+        # Les vidéos mp4/mov ne sont pas supportées par l'API Discord Embed
+        if any(image.lower().endswith(ext) for ext in ['.mp4','.mov','.webm','.avi']):
+            e.add_field(name="🎬 Vidéo", value=f"[Cliquer pour voir la vidéo]({image})", inline=False)
+        else:
+            try: e.set_image(url=image)
+            except: e.add_field(name="🖼️ Image", value=f"[Voir l'image]({image})", inline=False)
     if miniature:  e.set_thumbnail(url=miniature)
     await target.send(embed=e)
     await i.followup.send(embed=ok("Envoyé !", f"Dans {target.mention}"), ephemeral=True)
@@ -1523,8 +1591,11 @@ async def panel(i: discord.Interaction, titre: str="Support",
     await i.response.defer(ephemeral=True)
     e = emb(f"🎫  {titre}", description, C.NEON_CYAN)
     if image:
-        # Accepter URL directe ou lien Discord/tenor/giphy
-        e.set_image(url=image)
+        if any(image.lower().endswith(ext) for ext in ['.mp4','.mov','.webm','.avi']):
+            e.add_field(name="🎬 Vidéo", value=f"[Cliquer pour voir la vidéo]({image})", inline=False)
+        else:
+            try: e.set_image(url=image)
+            except: pass
     await i.channel.send(embed=e, view=TicketView())
     await i.followup.send(embed=ok("Panel créé !"), ephemeral=True)
 
@@ -1823,14 +1894,33 @@ async def backup(i: discord.Interaction, nom: Optional[str]=None):
         ephemeral=True)
 
 @bot.tree.command(name="restore", description="Restaurer une sauvegarde")
-@app_commands.describe(nom="Nom de la sauvegarde")
+@app_commands.describe(nom="Nom de la sauvegarde (vide = voir la liste)")
 @app_commands.default_permissions(administrator=True)
-async def restore(i: discord.Interaction, nom: str):
-    await i.response.defer()
-    gid  = str(i.guild.id)
-    data = bot.backups.get(gid, {}).get(nom)
+async def restore(i: discord.Interaction, nom: Optional[str]=None):
+    await i.response.defer(ephemeral=True)
+    gid   = str(i.guild.id)
+    saves = bot.backups.get(gid, {})
+    # Sans nom → afficher la liste
+    if not nom:
+        if not saves:
+            return await i.followup.send(embed=er("Aucune sauvegarde","Utilise `/backup` pour créer une sauvegarde."),ephemeral=True)
+        desc = ""
+        for idx,(name,data) in enumerate(sorted(saves.items(),reverse=True)[:20],1):
+            nr = len(data.get("roles",[]))
+            nt = len(data.get("text",[]))
+            nv = len(data.get("voice",[]))
+            desc += f"`{idx}.` **{name}** — {nr} roles | {nt} texte | {nv} vocal\n"
+        e = inf(f"Sauvegardes disponibles ({len(saves)})", desc)
+        e.set_footer(text="Utilise /restore nom:NOM_DE_LA_SAUVEGARDE  ◈  AEGIS V2.1")
+        return await i.followup.send(embed=e, ephemeral=True)
+    data = saves.get(nom)
     if not data:
-        return await i.followup.send(embed=er("Introuvable", f"Sauvegarde `{nom}` inexistante."))
+        # Chercher approximativement
+        matches = [k for k in saves if nom.lower() in k.lower()]
+        if matches:
+            desc = "\n".join([f"• `{m}`" for m in matches[:10]])
+            return await i.followup.send(embed=er("Introuvable",f"Sauvegarde `{nom}` inexistante.\n\nSimilaires:\n{desc}"),ephemeral=True)
+        return await i.followup.send(embed=er("Introuvable",f"Aucune sauvegarde `{nom}`. Utilise `/restore` sans nom pour voir la liste."),ephemeral=True)
     r = {"roles":0,"channels":0}
     for x in data.get("roles",[]):
         if not discord.utils.get(i.guild.roles, name=x["name"]):
@@ -1953,6 +2043,65 @@ async def admin_panel(i: discord.Interaction):
         value=f"[Railway](https://railway.app) • [Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
         inline=False)
     await i.followup.send(embed=e, ephemeral=True)
+
+
+@bot.tree.command(name="verification_quiz", description="Créer un système de vérification par quiz (A/B/C/D)")
+@app_commands.describe(
+    question="La question à poser",
+    role="Rôle attribué si bonne réponse",
+    bonne_reponse="La bonne réponse (exactement comme tu vas l'écrire dans les choix)",
+    choix_a="Choix A",
+    choix_b="Choix B",
+    choix_c="Choix C (optionnel)",
+    choix_d="Choix D (optionnel)"
+)
+@app_commands.default_permissions(administrator=True)
+async def verification_quiz(i: discord.Interaction,
+                             question: str,
+                             role: discord.Role,
+                             bonne_reponse: str,
+                             choix_a: str,
+                             choix_b: str,
+                             choix_c: Optional[str]=None,
+                             choix_d: Optional[str]=None):
+    gid = str(i.guild.id)
+    all_choices_raw = [choix_a, choix_b, choix_c, choix_d]
+    choices = []
+    for c in all_choices_raw:
+        if c:
+            choices.append({
+                "label":   c,
+                "correct": c.strip().lower() == bonne_reponse.strip().lower()
+            })
+    # Vérifier qu'il y a bien une bonne réponse parmi les choix
+    if not any(c["correct"] for c in choices):
+        return await i.response.send_message(
+            embed=er("Bonne réponse introuvable",
+                f"La bonne réponse **{bonne_reponse}** doit correspondre exactement à l'un des choix."),
+            ephemeral=True)
+    # Mélanger les choix
+    random.shuffle(choices)
+    # Stocker la config
+    bot.verif_quiz[gid] = {"question": question, "choices": choices, "role_id": role.id}
+    # Vérifier permissions
+    if not check_perms(i.channel, i.guild.me):
+        return await i.response.send_message(
+            embed=er("Accès refusé", "Je n'ai pas accès à ce salon."), ephemeral=True)
+    await i.response.defer(ephemeral=True)
+    # Créer l'embed
+    labels = ["🇦","🇧","🇨","🇩"]
+    desc = f"**{question}**\n\n"
+    for idx, c in enumerate(choices):
+        desc += f"{labels[idx]}  {c['label']}\n"
+    desc += f"\n*Clique sur la bonne réponse pour obtenir le rôle {role.mention}*"
+    e = discord.Embed(title="◈  Vérification", description=desc,
+                      color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
+    e.set_footer(text="AEGIS V2.1  ◈  Une seule chance, réfléchis bien !")
+    view = QuizView(gid, choices, role.id)
+    await i.channel.send(embed=e, view=view)
+    await i.followup.send(embed=ok("Quiz de vérification créé !",
+        f"Question : **{question}**\nBonne réponse : `{bonne_reponse}`\nRôle : {role.mention}"),
+        ephemeral=True)
 
 # ══════════════════════════════════════════════
 #  /admin_panel — Réservé au propriétaire du bot

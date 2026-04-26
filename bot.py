@@ -219,9 +219,32 @@ FF = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max
 async def fetch_track(query: str):
     try:
         import yt_dlp
-        opts = {'format':'bestaudio/best','noplaylist':True,'quiet':True,'no_warnings':True,
-                'default_search':'ytsearch1','source_address':'0.0.0.0','extractor_retries':3,
-                'http_headers':{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}}
+        opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'ytsearch1',
+            'source_address': '0.0.0.0',
+            'extractor_retries': 5,
+            'age_limit': 99,
+            'geo_bypass': True,
+            'skip_download': True,
+            # Utiliser SoundCloud/autres sources si YouTube bloque
+            'extract_flat': False,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+            # Bypass YouTube bot detection
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['configs'],
+                },
+            },
+        }
         def _get():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(
@@ -1720,14 +1743,27 @@ async def depart(i: discord.Interaction, salon_id: str):
             "puis clic droit sur le salon → **Copier l'identifiant**."), ephemeral=True)
 
 @bot.tree.command(name="giveaway", description="Créer un giveaway")
-@app_commands.describe(titre="Titre", prix="Prix", heures="Durée en heures", gagnants="Nb gagnants")
+@app_commands.describe(titre="Titre", prix="Prix", duree="Durée (ex: 10m, 2h, 1j)", gagnants="Nb gagnants")
 @app_commands.default_permissions(administrator=True)
-async def giveaway(i: discord.Interaction, titre: str, prix: str, heures: int, gagnants: int=1):
+async def giveaway(i: discord.Interaction, titre: str, prix: str, duree: str, gagnants: int=1):
     perms = i.channel.permissions_for(i.guild.me)
     if not perms.view_channel or not perms.send_messages or not perms.embed_links:
         return await i.response.send_message(embed=er("Accès refusé","Je n'ai pas accès à ce salon."),ephemeral=True)
+    # Parser la durée (ex: 10m, 2h, 1j, 30s)
+    try:
+        duree_lower = duree.strip().lower()
+        if duree_lower.endswith('j'):   total_s = int(duree_lower[:-1]) * 86400
+        elif duree_lower.endswith('h'): total_s = int(duree_lower[:-1]) * 3600
+        elif duree_lower.endswith('m'): total_s = int(duree_lower[:-1]) * 60
+        elif duree_lower.endswith('s'): total_s = int(duree_lower[:-1])
+        else:                           total_s = int(duree_lower) * 60  # défaut: minutes
+        if total_s < 10: total_s = 10
+    except:
+        return await i.response.send_message(
+            embed=er("Durée invalide","Exemples : `10m` (10 minutes), `2h` (2 heures), `1j` (1 jour)"),
+            ephemeral=True)
     await i.response.defer()
-    end = datetime.now(timezone.utc) + timedelta(hours=heures)
+    end = datetime.now(timezone.utc) + timedelta(seconds=total_s)
     e = discord.Embed(title=f"🎉  {titre.upper()}",
                       description=f"◎ **Prix :** {prix}\n─────────────────────",
                       color=C.NEON_GOLD, timestamp=datetime.now(timezone.utc))
@@ -1741,7 +1777,7 @@ async def giveaway(i: discord.Interaction, titre: str, prix: str, heures: int, g
                           "cid":str(i.channel.id),"gid":str(i.guild.id),"p":[],"ended":False}
     v = GAView(mid); bot.add_view(v); await msg.edit(view=v)
     await i.followup.send(embed=ok("Giveaway créé !",
-        f"**{titre}** — {prix} — {heures}h — {gagnants} gagnant(s)"), ephemeral=True)
+        f"**{titre}** — {prix} — {duree} — {gagnants} gagnant(s)"), ephemeral=True)
 
 @bot.tree.command(name="reroll", description="Relancer un giveaway terminé")
 @app_commands.describe(message_id="ID du message du giveaway")
@@ -2092,32 +2128,98 @@ async def admin_panel(i: discord.Interaction):
     await i.followup.send(embed=e, ephemeral=True)
 
 
-@bot.tree.command(name="verification_quiz", description="Verification auto style GLaDOS - le bot genere le quiz tout seul")
-@app_commands.describe(role="Role attribue si bonne reponse",titre="Titre du panel",description="Description",nb_faux_codes="Nombre de faux codes (2-4)")
+@bot.tree.command(name="verification_quiz", description="Créer une vérification automatique par code aléatoire (style GLaDOS)")
+@app_commands.describe(
+    role="Rôle attribué si bon code",
+    titre="Titre de l'embed (optionnel)",
+    description="Description de l'embed (optionnel)",
+    nb_faux="Nombre de faux codes (2 ou 3, défaut: 3)")
+@app_commands.choices(nb_faux=[
+    app_commands.Choice(name="2 faux codes (3 total)", value=2),
+    app_commands.Choice(name="3 faux codes (4 total)", value=3)])
 @app_commands.default_permissions(administrator=True)
-async def verification_quiz(i: discord.Interaction, role: discord.Role, titre: str="Verification", description: str="Selectionne le bon code pour acceder au serveur.", nb_faux_codes: int=3):
+async def verification_quiz(i: discord.Interaction,
+                             role: discord.Role,
+                             titre: str="◈  Vérification",
+                             description: str="Sélectionne le bon code pour accéder au serveur.",
+                             nb_faux: int=3):
     gid = str(i.guild.id)
     if not check_perms(i.channel, i.guild.me):
-        return await i.response.send_message(embed=er("Acces refuse","Je n'ai pas acces a ce salon."),ephemeral=True)
+        return await i.response.send_message(
+            embed=er("Acces refuse","Je n'ai pas acces a ce salon."), ephemeral=True)
     await i.response.defer(ephemeral=True)
+
     import string
-    chars = string.ascii_uppercase + string.digits
-    true_code = "".join(random.choices(chars, k=7))
-    false_codes = set()
-    while len(false_codes) < min(max(nb_faux_codes,2),4)-1:
-        fake = list(true_code)
-        for pos in random.sample(range(len(fake)), random.randint(1,2)):
-            fake[pos] = random.choice(chars.replace(fake[pos],""))
-        false_codes.add("".join(fake))
-    all_choices = [{"label":true_code,"correct":True}] + [{"label":fc,"correct":False} for fc in false_codes]
-    random.shuffle(all_choices)
-    bot.verif_quiz[gid] = {"true_code":true_code,"choices":all_choices,"role_id":role.id}
-    e = discord.Embed(title=f"◈  {titre}", description=f"{description}\n\nBienvenue sur **{i.guild.name}**.\nSelectionnez le code correspondant :", color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="\u200b", value=f"```\n{'─'*8} {true_code} {'─'*8}\n```", inline=False)
-    e.set_footer(text="AEGIS V2.1  ◈  Choisissez le bon code dans le menu")
-    view = QuizView(gid, all_choices, role.id)
-    await i.channel.send(embed=e, view=view)
-    await i.followup.send(embed=ok("Verification creee !",f"Code correct : `{true_code}` — Role : {role.mention}"),ephemeral=True)
+    def gen_code():
+        chars = string.ascii_uppercase + string.digits
+        return ''.join(random.choices(chars, k=7))
+
+    # Générer le bon code et les faux codes
+    true_code  = gen_code()
+    fake_codes = [gen_code() for _ in range(nb_faux)]
+    all_codes  = [true_code] + fake_codes
+    random.shuffle(all_codes)
+
+    # Stocker
+    bot.verif_quiz[gid] = {"true_code": true_code, "role_id": role.id}
+
+    # Construire le Select
+    options = [
+        discord.SelectOption(
+            label=f"Code Numéro {idx+1}",
+            description=code_val,
+            value=code_val
+        )
+        for idx, code_val in enumerate(all_codes)
+    ]
+
+    class VerifSelect(discord.ui.Select):
+        def __init__(self):
+            super().__init__(
+                placeholder="Choisi le bon code...",
+                min_values=1, max_values=1,
+                options=options,
+                custom_id=f"verif_select_{gid}")
+        async def callback(self, inter: discord.Interaction):
+            cfg = bot.verif_quiz.get(str(inter.guild.id))
+            if not cfg:
+                return await inter.response.send_message("Configuration introuvable.", ephemeral=True)
+            selected = self.values[0]
+            if selected == cfg["true_code"]:
+                r = inter.guild.get_role(cfg["role_id"])
+                if not r:
+                    return await inter.response.send_message("Rôle introuvable.", ephemeral=True)
+                if r in inter.user.roles:
+                    return await inter.response.send_message("✅ Tu es déjà vérifié !", ephemeral=True)
+                try:
+                    await inter.user.add_roles(r)
+                    await inter.response.send_message(
+                        f"✅ Bon code ! Rôle {r.mention} attribué.", ephemeral=True)
+                except discord.Forbidden:
+                    await inter.response.send_message(
+                        "❌ Je n'ai pas la permission d'attribuer ce rôle.", ephemeral=True)
+            else:
+                await inter.response.send_message(
+                    "❌ Mauvais code. Réessaie !", ephemeral=True)
+
+    class VerifView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+            self.add_item(VerifSelect())
+
+    # Embed avec le code affiché comme dans l'image
+    bar  = "─" * 8
+    code_display = f"{bar}  {true_code}  {bar}"
+    e = discord.Embed(title=titre, description=description, color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="\u200b", value=f"```\n{code_display}\n```", inline=False)
+    e.set_footer(text="AEGIS V2.1  ◈  Choisis le bon code dans le menu ci-dessous")
+
+    await i.channel.send(embed=e, view=VerifView())
+    await i.followup.send(
+        embed=ok("Verification creee !",
+            f"Bon code : `{true_code}`\nRole : {role.mention}\nFaux codes : {nb_faux}"),
+        ephemeral=True)
+
 
 # ══════════════════════════════════════════════
 #  /admin_panel — Réservé au propriétaire du bot

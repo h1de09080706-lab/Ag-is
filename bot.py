@@ -95,7 +95,8 @@ class Aegis(commands.Bot):
         self.nuke_cfg    = {}
         self.nuke_track  = {}
         self.backups     = {}
-        # Guard anti-doublon pour on_member_join/remove
+        self.backups     = {}
+        self.verif_quiz  = {}   # {gid: {true_code, choices, role_id}}
         self._join_cache   = {}   # {gid-uid: timestamp}
         self._remove_cache = {}
 
@@ -957,56 +958,93 @@ async def on_message(message: discord.Message):
 
 
 # ══════════════════════════════════════════════
-#  SYSTÈME VÉRIFICATION PAR QUIZ (A/B/C/D)
+#  SYSTÈME VÉRIFICATION GLaDOS (CODE ALÉATOIRE)
 # ══════════════════════════════════════════════
-# Stockage des configs quiz par serveur
-# bot.verif_quiz = {gid: {question, choices: [{"label","correct"}], role_id}}
+import string as _string
 
-class QuizView(discord.ui.View):
-    def __init__(self, gid: str, choices: list, role_id: int):
-        super().__init__(timeout=None)
-        styles = [
-            discord.ButtonStyle.primary,
-            discord.ButtonStyle.success,
-            discord.ButtonStyle.danger,
-            discord.ButtonStyle.secondary,
+def gen_code(length=8):
+    """Génère un code aléatoire style GLaDOS (lettres+chiffres)."""
+    chars = _string.ascii_uppercase + _string.digits
+    # Exclure les caractères ambigus
+    chars = chars.replace("0","").replace("O","").replace("I","").replace("1","")
+    return "".join(random.choices(chars, k=length))
+
+class VerifCodeView(discord.ui.View):
+    """Menu déroulant avec des codes, un seul est le bon."""
+    def __init__(self, gid: str, correct_code: str, fake_codes: list, role_id: int):
+        super().__init__(timeout=300)  # 5 min
+        self.add_item(VerifCodeSelect(gid, correct_code, fake_codes, role_id))
+
+class VerifCodeSelect(discord.ui.Select):
+    def __init__(self, gid, correct_code, fake_codes, role_id):
+        all_codes = [correct_code] + fake_codes
+        random.shuffle(all_codes)
+        options = [
+            discord.SelectOption(
+                label=f"Code Numéro {idx+1}",
+                description=code,
+                value=code
+            )
+            for idx, code in enumerate(all_codes)
         ]
-        for idx, choice in enumerate(choices[:4]):
-            self.add_item(QuizBtn(
-                label=choice["label"],
-                correct=choice.get("correct", False),
-                gid=gid,
-                role_id=role_id,
-                custom_id=f"quiz_{gid}_{idx}",
-                style=styles[idx % len(styles)]
-            ))
-
-class QuizBtn(discord.ui.Button):
-    def __init__(self, label, correct, gid, role_id, custom_id, style):
-        super().__init__(label=label[:80], style=style, custom_id=custom_id)
-        self.correct = correct
-        self.gid     = gid
-        self.role_id = role_id
+        super().__init__(
+            placeholder="Choisi le bon code...",
+            min_values=1, max_values=1,
+            options=options,
+            custom_id=f"verif_code_{gid}"
+        )
+        self.correct_code = correct_code
+        self.role_id      = role_id
 
     async def callback(self, i: discord.Interaction):
-        if self.correct:
+        chosen = self.values[0]
+        if chosen == self.correct_code:
             role = i.guild.get_role(self.role_id)
             if not role:
-                return await i.response.send_message(
-                    "❌ Rôle introuvable. Contacte un admin.", ephemeral=True)
+                return await i.response.send_message("❌ Rôle introuvable.", ephemeral=True)
             if role in i.user.roles:
-                return await i.response.send_message(
-                    "✅ Tu es déjà vérifié !", ephemeral=True)
+                return await i.response.send_message("✅ Tu es déjà vérifié !", ephemeral=True)
             try:
                 await i.user.add_roles(role)
                 await i.response.send_message(
-                    f"✅ Bonne réponse ! Rôle {role.mention} attribué.", ephemeral=True)
+                    f"✅ **Protocole accepté.** Rôle {role.mention} attribué.", ephemeral=True)
             except discord.Forbidden:
-                await i.response.send_message(
-                    "❌ Je n'ai pas la permission d'attribuer ce rôle.", ephemeral=True)
+                await i.response.send_message("❌ Permission manquante.", ephemeral=True)
         else:
             await i.response.send_message(
-                "❌ Mauvaise réponse. Réessaie !", ephemeral=True)
+                "❌ **Code incorrect.** Analyse en cours... Recommence.", ephemeral=True)
+
+# Ancienne QuizView conservée pour compatibilité
+class QuizSelect(discord.ui.Select):
+    def __init__(self, gid, choices, role_id):
+        nums = ["Code Numero 1","Code Numero 2","Code Numero 3","Code Numero 4"]
+        opts = [discord.SelectOption(label=nums[idx],description=c["label"],value=str(idx)) for idx,c in enumerate(choices[:4])]
+        super().__init__(placeholder="Choisi le bon code...",min_values=1,max_values=1,options=opts,custom_id=f"quiz_sel_{gid}")
+        self.choices = choices; self.role_id = role_id
+    async def callback(self, i: discord.Interaction):
+        choice = self.choices[int(self.values[0])]
+        if choice.get("correct"):
+            role = i.guild.get_role(self.role_id)
+            if not role: return await i.response.send_message("❌ Role introuvable.",ephemeral=True)
+            if role in i.user.roles: return await i.response.send_message("✅ Deja verifie !",ephemeral=True)
+            try:
+                await i.user.add_roles(role)
+                await i.response.send_message(f"✅ Code correct. Acces autorise. {role.mention} attribue.",ephemeral=True)
+            except discord.Forbidden:
+                await i.response.send_message("❌ Permission manquante.",ephemeral=True)
+        else:
+            await i.response.send_message("❌ Code incorrect. *Interessant. Reessaie.*",ephemeral=True)
+
+class QuizView(discord.ui.View):
+    def __init__(self, gid, choices, role_id):
+        super().__init__(timeout=None)
+        self.add_item(QuizSelect(gid, choices, role_id))
+        self.add_item(QuizSelect(gid, choices, role_id))
+
+
+
+
+
 
 # ══════════════════════════════════════════════
 #  COMMANDES
@@ -1900,8 +1938,8 @@ async def restore(i: discord.Interaction, nom: Optional[str]=None):
     await i.response.defer(ephemeral=True)
     gid   = str(i.guild.id)
     saves = bot.backups.get(gid, {})
-    # Sans nom → afficher la liste
-    if not nom:
+    # Sans nom (ou nom vide) → afficher la liste
+    if not nom or not nom.strip():
         if not saves:
             return await i.followup.send(embed=er("Aucune sauvegarde","Utilise `/backup` pour créer une sauvegarde."),ephemeral=True)
         desc = ""
@@ -2015,7 +2053,7 @@ async def admin_panel(i: discord.Interaction):
     await i.response.defer(ephemeral=True)
     guilds       = bot.guilds
     total_users  = sum(g.member_count or 0 for g in guilds)
-    total_bots   = sum(sum(1 for m in g.members if m.bot) for g in guilds if g.members)
+    total_bots   = len(guilds)
     total_humans = max(0, total_users - total_bots)
     nuke_on      = sum(1 for c in bot.nuke_cfg.values() if c.get("enabled"))
     spam_on      = sum(1 for c in bot.spam_cfg.values() if c.get("enabled"))
@@ -2035,9 +2073,18 @@ async def admin_panel(i: discord.Interaction):
         value=f"**Joueurs XP :** `{xp_users}`\n**Giveaways :** `{ga_actifs}`\n**Sondages :** `{len(bot.polls)}`",
         inline=True)
     srv = sorted(guilds, key=lambda x: x.member_count or 0, reverse=True)[:15]
-    srv_txt = "".join(f"`{idx}.` **{g.name}** — `{g.member_count or 0}` membres\n" for idx,g in enumerate(srv,1))
-    if len(guilds) > 15: srv_txt += f"*... et {len(guilds)-15} autre(s)*"
-    e.add_field(name=f"📋  Serveurs ({len(guilds)})", value=srv_txt or "Aucun", inline=False)
+    srv_sorted = sorted(guilds, key=lambda x: x.member_count or 0, reverse=True)
+    chunk_size = 8
+    added_fields = 0
+    for chunk_idx in range(0, len(srv_sorted), chunk_size):
+        if added_fields >= 3: break  # max 3 fields serveurs
+        chunk = srv_sorted[chunk_idx:chunk_idx+chunk_size]
+        srv_txt = "".join(f"`{chunk_idx+idx+1}.` **{g.name}** — `{g.member_count or 0}` membres\n" for idx,g in enumerate(chunk))
+        fname = f"📋  Serveurs ({len(guilds)})" if chunk_idx==0 else "📋  Suite..."
+        e.add_field(name=fname, value=srv_txt or "Aucun", inline=False)
+        added_fields += 1
+    if len(srv_sorted) > chunk_size*3:
+        e.add_field(name="...", value=f"*Et {len(srv_sorted)-chunk_size*3} autre(s)*", inline=False)
     invite = f"https://discord.com/oauth2/authorize?client_id={bot.application_id}&permissions=8&integration_type=0&scope=bot"
     e.add_field(name="🔗  Liens",
         value=f"[Railway](https://railway.app) • [Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
@@ -2045,63 +2092,32 @@ async def admin_panel(i: discord.Interaction):
     await i.followup.send(embed=e, ephemeral=True)
 
 
-@bot.tree.command(name="verification_quiz", description="Créer un système de vérification par quiz (A/B/C/D)")
-@app_commands.describe(
-    question="La question à poser",
-    role="Rôle attribué si bonne réponse",
-    bonne_reponse="La bonne réponse (exactement comme tu vas l'écrire dans les choix)",
-    choix_a="Choix A",
-    choix_b="Choix B",
-    choix_c="Choix C (optionnel)",
-    choix_d="Choix D (optionnel)"
-)
+@bot.tree.command(name="verification_quiz", description="Verification auto style GLaDOS - le bot genere le quiz tout seul")
+@app_commands.describe(role="Role attribue si bonne reponse",titre="Titre du panel",description="Description",nb_faux_codes="Nombre de faux codes (2-4)")
 @app_commands.default_permissions(administrator=True)
-async def verification_quiz(i: discord.Interaction,
-                             question: str,
-                             role: discord.Role,
-                             bonne_reponse: str,
-                             choix_a: str,
-                             choix_b: str,
-                             choix_c: Optional[str]=None,
-                             choix_d: Optional[str]=None):
+async def verification_quiz(i: discord.Interaction, role: discord.Role, titre: str="Verification", description: str="Selectionne le bon code pour acceder au serveur.", nb_faux_codes: int=3):
     gid = str(i.guild.id)
-    all_choices_raw = [choix_a, choix_b, choix_c, choix_d]
-    choices = []
-    for c in all_choices_raw:
-        if c:
-            choices.append({
-                "label":   c,
-                "correct": c.strip().lower() == bonne_reponse.strip().lower()
-            })
-    # Vérifier qu'il y a bien une bonne réponse parmi les choix
-    if not any(c["correct"] for c in choices):
-        return await i.response.send_message(
-            embed=er("Bonne réponse introuvable",
-                f"La bonne réponse **{bonne_reponse}** doit correspondre exactement à l'un des choix."),
-            ephemeral=True)
-    # Mélanger les choix
-    random.shuffle(choices)
-    # Stocker la config
-    bot.verif_quiz[gid] = {"question": question, "choices": choices, "role_id": role.id}
-    # Vérifier permissions
     if not check_perms(i.channel, i.guild.me):
-        return await i.response.send_message(
-            embed=er("Accès refusé", "Je n'ai pas accès à ce salon."), ephemeral=True)
+        return await i.response.send_message(embed=er("Acces refuse","Je n'ai pas acces a ce salon."),ephemeral=True)
     await i.response.defer(ephemeral=True)
-    # Créer l'embed
-    labels = ["🇦","🇧","🇨","🇩"]
-    desc = f"**{question}**\n\n"
-    for idx, c in enumerate(choices):
-        desc += f"{labels[idx]}  {c['label']}\n"
-    desc += f"\n*Clique sur la bonne réponse pour obtenir le rôle {role.mention}*"
-    e = discord.Embed(title="◈  Vérification", description=desc,
-                      color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
-    e.set_footer(text="AEGIS V2.1  ◈  Une seule chance, réfléchis bien !")
-    view = QuizView(gid, choices, role.id)
+    import string
+    chars = string.ascii_uppercase + string.digits
+    true_code = "".join(random.choices(chars, k=7))
+    false_codes = set()
+    while len(false_codes) < min(max(nb_faux_codes,2),4)-1:
+        fake = list(true_code)
+        for pos in random.sample(range(len(fake)), random.randint(1,2)):
+            fake[pos] = random.choice(chars.replace(fake[pos],""))
+        false_codes.add("".join(fake))
+    all_choices = [{"label":true_code,"correct":True}] + [{"label":fc,"correct":False} for fc in false_codes]
+    random.shuffle(all_choices)
+    bot.verif_quiz[gid] = {"true_code":true_code,"choices":all_choices,"role_id":role.id}
+    e = discord.Embed(title=f"◈  {titre}", description=f"{description}\n\nBienvenue sur **{i.guild.name}**.\nSelectionnez le code correspondant :", color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
+    e.add_field(name="\u200b", value=f"```\n{'─'*8} {true_code} {'─'*8}\n```", inline=False)
+    e.set_footer(text="AEGIS V2.1  ◈  Choisissez le bon code dans le menu")
+    view = QuizView(gid, all_choices, role.id)
     await i.channel.send(embed=e, view=view)
-    await i.followup.send(embed=ok("Quiz de vérification créé !",
-        f"Question : **{question}**\nBonne réponse : `{bonne_reponse}`\nRôle : {role.mention}"),
-        ephemeral=True)
+    await i.followup.send(embed=ok("Verification creee !",f"Code correct : `{true_code}` — Role : {role.mention}"),ephemeral=True)
 
 # ══════════════════════════════════════════════
 #  /admin_panel — Réservé au propriétaire du bot

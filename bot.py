@@ -1,12 +1,19 @@
 """
 ╔══════════════════════════════════════════════╗
 ║         AEGIS AI — Bot Discord               ║
-║   IA au centre • Anime ton serveur           ║
+║   IA au centre • Components V2               ║
 ╚══════════════════════════════════════════════╝
 Variables Railway :
   DISCORD_BOT_TOKEN  → token du bot
   GROQ_API_KEY       → clé API groq (gsk_...)
   BOT_OWNER_ID       → ton ID Discord (optionnel)
+
+Requirements:
+  discord.py[voice]>=2.6.0
+  python-dotenv>=1.0.0
+  PyNaCl>=1.5.0
+  yt-dlp>=2024.1.1
+  aiohttp>=3.9.0
 """
 
 import discord
@@ -42,13 +49,11 @@ class C:
     MOD   = NEON_PINK
     SYS   = NEON_BLUE
 
-class E:
-    OK="✅"; KO="❌"; INFO="◈"; WARN="⚠️"; NUKE="☢️"
-    BAN="⛔"; KICK="⚡"; MUTE="🔇"; ROLE="◉"; CHAN="▣"
-    MUSIC="♪"; XP="◆"; GOLD="◈"; GIFT="◎"; POLL="▸"
-    TICKET="⊠"; AI="◉"; WAVE="◈"; DOOR="◉"; ARROW="►"
-    SHIELD="◈"; GEAR="◈"; MEGA="▶"; LINE="─────────────────────"
+LINE = "─────────────────────"
 
+# ══════════════════════════════════════════════
+#  HELPERS EMBED CLASSIQUE (pour ephemeral etc.)
+# ══════════════════════════════════════════════
 def emb(title: str, desc: str=None, color: int=C.NEON_CYAN, footer: str=None) -> discord.Embed:
     e = discord.Embed(title=title, description=desc, color=color,
                       timestamp=datetime.now(timezone.utc))
@@ -59,7 +64,354 @@ def ok(t, d=None):      return emb(f"✅  {t}", d, C.NEON_GREEN)
 def er(t, d=None):      return emb(f"❌  {t}", d, C.NEON_RED)
 def inf(t, d=None):     return emb(f"◈  {t}", d, C.NEON_CYAN)
 def warn(t, d=None):    return emb(f"⚠️  {t}", d, C.NEON_ORANGE)
-def sys_emb(t, d=None): return emb(f"☢️  {t}", d, C.NEON_PINK)
+
+# ══════════════════════════════════════════════
+#  COMPONENTS V2 — LAYOUTS VITRINES
+# ══════════════════════════════════════════════
+
+class AIChatLayout(discord.ui.LayoutView):
+    """Layout V2 pour /ai chat — Section avec thumbnail avatar"""
+    def __init__(self, question: str, reponse: str, user: discord.Member):
+        super().__init__()
+        ts = f"<t:{int(datetime.now(timezone.utc).timestamp())}:R>"
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(f"## ◉  AEGIS AI"),
+                discord.ui.TextDisplay(reponse),
+                accessory=discord.ui.Thumbnail(user.display_avatar.url)
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                f"-# 💬 {user.display_name} — {ts}  ◈  discord.gg/6rN8pneGdy"
+            ),
+            accent_color=C.NEON_PINK
+        )
+        self.add_item(container)
+
+
+class RankLayout(discord.ui.LayoutView):
+    """Layout V2 pour /stats rank"""
+    def __init__(self, member: discord.Member, level: int, xp: int, req: int,
+                 rank: int, messages: int):
+        super().__init__()
+        pct  = int(xp / req * 100) if req > 0 else 0
+        full = pct // 10
+        bar  = "█" * full + "░" * (10 - full)
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(f"## ◆  {member.display_name}"),
+                discord.ui.TextDisplay(
+                    f"**Niveau** `{level}`  ·  **Classement** `#{rank}`\n"
+                    f"**XP** `{xp}` / `{req}`  ·  **Messages** `{messages}`\n\n"
+                    f"`{bar}` **{pct}%**"
+                ),
+                accessory=discord.ui.Thumbnail(member.display_avatar.url)
+            ),
+            accent_color=C.NEON_GOLD
+        )
+        self.add_item(container)
+
+
+class UserInfoLayout(discord.ui.LayoutView):
+    """Layout V2 pour /stats userinfo"""
+    def __init__(self, member: discord.Member, level: int, xp: int):
+        super().__init__()
+        roles = [r.mention for r in member.roles if r.name != "@everyone"]
+        joined = member.joined_at.strftime("%d/%m/%Y") if member.joined_at else "?"
+        created = member.created_at.strftime("%d/%m/%Y")
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(f"## ◈  {member.display_name}"),
+                discord.ui.TextDisplay(
+                    f"**Discord** `{member}`\n"
+                    f"**ID** `{member.id}`\n"
+                    f"**Créé le** `{created}`  ·  **Rejoint le** `{joined}`\n"
+                    f"**Niveau** `{level}` ({xp} XP)  ·  **Bot** {'✅' if member.bot else '❌'}"
+                ),
+                accessory=discord.ui.Thumbnail(member.display_avatar.url)
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                f"**◉ Rôles ({len(roles)})**\n" + (" ".join(roles[:10]) if roles else "Aucun")
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class TopLayout(discord.ui.LayoutView):
+    """Layout V2 pour /stats top"""
+    def __init__(self, entries: list):
+        super().__init__()
+        medals = ["🥇","🥈","🥉"] + [f"`#{i}`" for i in range(4, 11)]
+        lines  = "\n".join(
+            f"{medals[idx]}  **{name}** — Niveau `{lv}` ({xp} XP)"
+            for idx, (name, lv, xp) in enumerate(entries)
+        )
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## ◆  Top 10 XP"),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(lines or "*Aucun joueur pour l'instant.*"),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_GOLD
+        )
+        self.add_item(container)
+
+
+class ServerInfoLayout(discord.ui.LayoutView):
+    """Layout V2 pour /stats serverinfo"""
+    def __init__(self, guild: discord.Guild, humans: int, bots: int):
+        super().__init__()
+        icon_url = guild.icon.url if guild.icon else None
+        owner    = guild.owner.mention if guild.owner else "?"
+        created  = guild.created_at.strftime("%d/%m/%Y")
+        section_content = (
+            f"## ◈  {guild.name}\n"
+            f"**ID** `{guild.id}`\n"
+            f"**Propriétaire** {owner}  ·  **Créé le** `{created}`\n"
+            f"**Membres** `{humans}` humains / `{bots}` bots\n"
+            f"**Salons** `{len(guild.text_channels)}` texte / `{len(guild.voice_channels)}` vocal\n"
+            f"**Rôles** `{len(guild.roles)}`  ·  **Boosts** `{guild.premium_subscription_count}` (Niv. {guild.premium_tier})"
+        )
+        if icon_url:
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(section_content),
+                accessory=discord.ui.Thumbnail(icon_url)
+            )
+        else:
+            section = discord.ui.Section(discord.ui.TextDisplay(section_content))
+
+        container = discord.ui.Container(
+            section,
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class AideLayout(discord.ui.LayoutView):
+    """Layout V2 pour /aide"""
+    def __init__(self):
+        super().__init__()
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# ◈  AEGIS AI\n"
+                "Bot Discord intelligent qui **anime ton serveur** grâce à l'IA.\n"
+                "Il répond, relance les discussions et rend ton serveur actif."
+            ),
+            discord.ui.Separator(),
+            discord.ui.Section(
+                discord.ui.TextDisplay(
+                    "## ◉  /ai\n"
+                    "`chat` · `relance` · `mode` · `memory` · `question`\n\n"
+                    "## ⛔  /mod\n"
+                    "`ban` · `unban` · `kick` · `mute` · `unmute` · `warn` · `unwarn` · `warns` · `purge` · `rename` · `lock` · `unlock` · `slowmode`\n\n"
+                    "## ♪  /music\n"
+                    "`play` · `pause` · `resume` · `skip` · `stop` · `queue` · `nowplaying` · `volume`"
+                ),
+                accessory=discord.ui.Thumbnail("https://cdn.discordapp.com/emojis/1234567890.png")
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                "## ▶  /fun\n"
+                "`tirage` · `sondage_rapide` · `avatar` · `dire` · `embed` · `dmall`\n\n"
+                "## ◆  /stats\n"
+                "`rank` · `top` · `userinfo` · `serverinfo`\n\n"
+                "## ⚙️  /server\n"
+                "`setup` · `arrivee` · `depart` · `panel` · `reglement` · `verification` · `verification_quiz` · `backup` · `restore` · `autorole` · `rolemenu` · `tempvoice` · `antiraid` · `antispam` · `antinuke` · `suggestion` · `creersalon` · `creervoice` · `supprimersalon` · `creerole` · `addrole` · `removerole` · `roleall`\n\n"
+                "## 🎉  /events\n"
+                "`giveaway` · `reroll` · `poll`"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                "## ◉  IA directe\n"
+                "Écris **aegis** dans un message ou mentionne **@AEGIS AI**\n\n"
+                "## ☢️  Owner\n"
+                "`/admin_panel`"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class WelcomeLayout(discord.ui.LayoutView):
+    """Layout V2 pour message de bienvenue"""
+    def __init__(self, member: discord.Member, count: int):
+        super().__init__()
+        created = member.created_at.strftime("%d/%m/%Y")
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"## ◈  Bienvenue sur {member.guild.name} !\n"
+                    f"**{member.mention}** vient de rejoindre le serveur.\n\n"
+                    f"**Compte créé le** `{created}`\n"
+                    f"**Membre numéro** `#{count}`"
+                ),
+                accessory=discord.ui.Thumbnail(member.display_avatar.url)
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# {member.guild.name}  ◈  {count} membres"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class GuildJoinLayout(discord.ui.LayoutView):
+    """Layout V2 pour message d'arrivée du bot"""
+    def __init__(self, bot_user):
+        super().__init__()
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# ◈  AEGIS AI — En ligne\n"
+                "Salut. Je suis **AEGIS AI**, ton assistant Discord intelligent.\n"
+                f"{LINE}"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                "## Ce que je fais vraiment\n"
+                "▸ **J'anime ton serveur** — je relance les discussions mortes\n"
+                "▸ **Je réponds** — écris `aegis` ou mentionne-moi\n"
+                "▸ **Je retiens le contexte** — je me souviens de la conversation\n"
+                f"{LINE}"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                "## Et en plus\n"
+                "▸ **Modération** — `/mod ban` `/mod kick` `/mod mute`...\n"
+                "▸ **Musique** — `/music play`\n"
+                "▸ **Systèmes** — tickets, vérification, giveaway, sondages\n"
+                "▸ **XP & Stats** — niveaux, classement, profils\n"
+                f"{LINE}"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(
+                "## ☢️ Protections activées automatiquement\n"
+                "▸ Anti-raid  ▸ Anti-spam  ▸ Anti-nuke\n\n"
+                "Pour tout voir : `/aide`\n"
+                "*Le protocole est en ligne. Bonne chance.*"
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class QuestionLayout(discord.ui.LayoutView):
+    """Layout V2 pour /ai question"""
+    def __init__(self, question: str):
+        super().__init__()
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## ◉  Question du jour"),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(question),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# Posée par AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_PINK
+        )
+        self.add_item(container)
+
+
+class MusicLayout(discord.ui.LayoutView):
+    """Layout V2 pour /music play (now playing)"""
+    def __init__(self, track: dict, status: str = "▶ Lecture"):
+        super().__init__()
+        duration = fmt(track.get("duration", 0))
+        thumb    = track.get("thumb", "")
+        webpage  = track.get("webpage", "")
+        title    = track.get("title", "?")
+
+        content = (
+            f"## ♪  {status}\n"
+            f"**{title}**\n"
+            f"⏱️ `{duration}`"
+        )
+        if webpage:
+            content += f"\n[▶ Ouvrir sur YouTube]({webpage})"
+
+        if thumb:
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(content),
+                accessory=discord.ui.Thumbnail(thumb)
+            )
+        else:
+            section = discord.ui.Section(discord.ui.TextDisplay(content))
+
+        container = discord.ui.Container(
+            section,
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
+
+class ModActionLayout(discord.ui.LayoutView):
+    """Layout V2 pour les actions de modération (ban/kick/mute/warn)"""
+    def __init__(self, emoji: str, titre: str, membre: discord.Member,
+                 raison: str, extra: str = None, color: int = C.NEON_RED):
+        super().__init__()
+        content = (
+            f"## {emoji}  {titre}\n"
+            f"**Membre** {membre.mention} (`{membre}`)\n"
+            f"**Raison** {raison}"
+        )
+        if extra:
+            content += f"\n{extra}"
+
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(content),
+                accessory=discord.ui.Thumbnail(membre.display_avatar.url)
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
+            accent_color=color
+        )
+        self.add_item(container)
+
+
+class LevelUpLayout(discord.ui.LayoutView):
+    """Layout V2 pour level up XP"""
+    def __init__(self, member: discord.Member, level: int):
+        super().__init__()
+        container = discord.ui.Container(
+            discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"## ◆  Level Up !\n"
+                    f"{member.mention} atteint le **niveau {level}** ◆"
+                ),
+                accessory=discord.ui.Thumbnail(member.display_avatar.url)
+            ),
+            accent_color=C.NEON_GOLD
+        )
+        self.add_item(container)
+
+
+class AvatarLayout(discord.ui.LayoutView):
+    """Layout V2 pour /fun avatar"""
+    def __init__(self, member: discord.Member):
+        super().__init__()
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## ◈  Avatar de {member.display_name}"),
+            discord.ui.MediaGallery(
+                discord.ui.MediaGalleryItem(
+                    media=member.display_avatar.with_size(1024).url,
+                    description=f"Avatar de {member.display_name}"
+                )
+            ),
+            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.TextDisplay(f"-# ID : {member.id}  ◈  AEGIS AI"),
+            accent_color=C.NEON_CYAN
+        )
+        self.add_item(container)
+
 
 # ══════════════════════════════════════════════
 #  BOT
@@ -95,9 +447,7 @@ class Aegis(commands.Bot):
         self.verif_quiz  = {}
         self._join_cache   = {}
         self._remove_cache = {}
-        # Mémoire conversationnelle IA par salon (50 derniers échanges)
         self.ai_memory: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
-        # Mode IA activé par salon
         self.ai_active: dict[str, bool] = {}
 
     async def setup_hook(self):
@@ -112,7 +462,7 @@ class Aegis(commands.Bot):
 bot = Aegis()
 
 # ══════════════════════════════════════════════
-#  ERROR HANDLER GLOBAL
+#  ERROR HANDLER
 # ══════════════════════════════════════════════
 @bot.tree.error
 async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -170,37 +520,31 @@ def default_spam_cfg():  return {"enabled": True,  "limit": 5, "window": 5, "men
 def default_nuke_cfg():  return {"enabled": True,  "threshold": 5,  "action": "kick", "whitelist": []}
 
 # ══════════════════════════════════════════════
-#  GROQ IA  — Mémoire conversationnelle
+#  GROQ IA
 # ══════════════════════════════════════════════
 AI_SYS = (
     "Tu es AEGIS AI, un assistant IA de bot Discord. Style GLaDOS : intelligent, légèrement sarcastique, "
     "condescendant avec subtilité, mais toujours utile et animé. Tu réponds TOUJOURS en français. "
     "Tu es le cœur de ce serveur — tu animes les discussions, tu relances les conversations mortes, "
-    "tu poses des questions aux membres. 2-4 phrases max. Jamais vulgaire. "
-    "Si le serveur semble calme, propose des sujets ou des questions pour relancer l'ambiance."
+    "tu poses des questions aux membres. 2-4 phrases max. Jamais vulgaire."
 )
 
 AI_SYS_RELANCE = (
     "Tu es AEGIS AI, bot Discord IA. Style GLaDOS sarcastique mais bienveillant. "
     "Tu vois que le serveur est calme. Génère UN message court et accrocheur (max 2 phrases) "
-    "pour relancer la conversation. Pose une question fun, fais une blague, ou propose un débat. "
-    "En français. Pas de formule de politesse. Droit au but."
+    "pour relancer la conversation. En français. Pas de formule de politesse. Droit au but."
 )
 
 async def ask_groq(q: str, channel_id: str = None, system: str = None) -> str:
     key = os.environ.get('GROQ_API_KEY', '').strip()
     if not key:
         return "*(Configure `GROQ_API_KEY` dans Railway → Variables)*"
-
     models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]
-
     messages = []
     if channel_id and channel_id in bot.ai_memory:
         messages.extend(list(bot.ai_memory[channel_id]))
     messages.append({"role": "user", "content": q[:800]})
-
     used_system = system or AI_SYS
-
     for model in models:
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
@@ -222,8 +566,7 @@ async def ask_groq(q: str, channel_id: str = None, system: str = None) -> str:
                 elif r.status == 429:
                     await asyncio.sleep(2); continue
                 else:
-                    err_msg = body.get('error', {}).get('message', str(r.status))
-                    return f"*(Erreur Groq: {err_msg[:80]})*"
+                    return f"*(Erreur Groq: {body.get('error',{}).get('message',str(r.status))[:80]})*"
         except asyncio.TimeoutError:
             return "*(Délai dépassé)*"
         except Exception as e:
@@ -239,26 +582,12 @@ async def fetch_track(query: str):
     try:
         import yt_dlp
         opts = {
-            'format': 'bestaudio/best',
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'default_search': 'ytsearch1',
-            'source_address': '0.0.0.0',
-            'extractor_retries': 5,
-            'age_limit': 99,
-            'geo_bypass': True,
-            'skip_download': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-            },
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['configs'],
-                },
-            },
+            'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True,
+            'no_warnings': True, 'default_search': 'ytsearch1',
+            'source_address': '0.0.0.0', 'extractor_retries': 5,
+            'age_limit': 99, 'geo_bypass': True, 'skip_download': True,
+            'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+            'extractor_args': {'youtube': {'player_client': ['android', 'web'], 'player_skip': ['configs']}},
         }
         def _get():
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -275,8 +604,7 @@ async def fetch_track(query: str):
         logger.error(f"yt-dlp: {e}"); return None
 
 async def next_track(gid: str):
-    vc = bot.vc_pool.get(gid)
-    q  = bot.queues.get(gid, [])
+    vc = bot.vc_pool.get(gid); q = bot.queues.get(gid, [])
     if not vc or not vc.is_connected(): bot.vc_pool.pop(gid, None); return
     if not q: bot.now_playing[gid] = None; return
     track = q.pop(0); bot.now_playing[gid] = track
@@ -301,14 +629,11 @@ async def check_spam(msg: discord.Message) -> bool:
     cfg = bot.spam_cfg.get(gid) or default_spam_cfg()
     if not cfg.get("enabled", True): return False
     bot.msg_cache[uid].append(now)
-    bot.msg_cache[uid] = [t for t in bot.msg_cache[uid]
-                          if (now - t).total_seconds() < cfg["window"]]
+    bot.msg_cache[uid] = [t for t in bot.msg_cache[uid] if (now-t).total_seconds() < cfg["window"]]
     spam = False; reason = ""
-    if len(bot.msg_cache[uid]) > cfg["limit"]:
-        spam = True; reason = "Spam messages"
+    if len(bot.msg_cache[uid]) > cfg["limit"]: spam = True; reason = "Spam messages"
     ments = len(msg.mentions) + len(msg.role_mentions) + (50 if msg.mention_everyone else 0)
-    if ments >= cfg["mentions"]:
-        spam = True; reason = f"Spam mentions ({ments})"
+    if ments >= cfg["mentions"]: spam = True; reason = f"Spam mentions ({ments})"
     if spam:
         try:
             await msg.delete()
@@ -316,16 +641,14 @@ async def check_spam(msg: discord.Message) -> bool:
             if   a == "kick": await msg.author.kick(reason=reason)
             elif a == "ban":  await msg.author.ban(reason=reason)
             else: await msg.author.timeout(now + timedelta(minutes=cfg["dur"]), reason=reason)
-            await msg.channel.send(
-                embed=warn("Anti-Spam", f"{msg.author.mention} sanctionné — {reason}"),
-                delete_after=8)
+            await msg.channel.send(embed=warn("Anti-Spam", f"{msg.author.mention} sanctionné — {reason}"), delete_after=8)
             bot.msg_cache[uid] = []
             return True
         except: pass
     return False
 
 # ══════════════════════════════════════════════
-#  XP
+#  XP — Level up en V2
 # ══════════════════════════════════════════════
 async def add_xp(msg: discord.Message):
     if msg.author.bot or not msg.guild: return
@@ -340,9 +663,7 @@ async def add_xp(msg: discord.Message):
         guild = bot.get_guild(int(gid))
         if guild:
             ch = guild.get_channel(bot.logs_ch.get(gid, 0)) or msg.channel
-            e = emb(f"◆  Level Up!", f"{msg.author.mention} atteint le **niveau {d['level']}** ◆", C.NEON_GOLD)
-            e.set_thumbnail(url=msg.author.display_avatar.url)
-            try: await ch.send(embed=e)
+            try: await ch.send(view=LevelUpLayout(msg.author, d["level"]))
             except: pass
 
 # ══════════════════════════════════════════════
@@ -432,8 +753,7 @@ async def end_ga(mid, g):
             except: pass
         if winners:
             desc = "\n".join([f"◈ {w.mention}" for w in winners])
-            e = emb(f"🎉  Giveaway Terminé",
-                    f"**{g['title']}**\n**Prix :** {g['prize']}\n\n{desc}", C.NEON_GOLD)
+            e = emb(f"🎉  Giveaway Terminé", f"**{g['title']}**\n**Prix :** {g['prize']}\n\n{desc}", C.NEON_GOLD)
             ann = discord.Embed(title="🎉  Félicitations !",
                 description=f"**{g['title']}**\n**Prix :** {g['prize']}\n**Gagnant(s) :** {' '.join([w.mention for w in winners])}",
                 color=C.NEON_GOLD, timestamp=datetime.now(timezone.utc))
@@ -443,8 +763,7 @@ async def end_ga(mid, g):
             msg = await ch.fetch_message(int(mid)); await msg.edit(embed=e, view=None)
         except: pass
         if winners:
-            await ch.send(content="@everyone 🎉", embed=ann,
-                          allowed_mentions=discord.AllowedMentions(everyone=True))
+            await ch.send(content="@everyone 🎉", embed=ann, allowed_mentions=discord.AllowedMentions(everyone=True))
     except Exception as e: logger.error(f"end_ga: {e}")
 
 # ══════════════════════════════════════════════
@@ -575,8 +894,7 @@ class TicketBtn(discord.ui.Button):
 
 class CloseView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="Fermer", style=discord.ButtonStyle.danger,
-                       custom_id="ticket_close", emoji="🔐")
+    @discord.ui.button(label="Fermer", style=discord.ButtonStyle.danger, custom_id="ticket_close", emoji="🔐")
     async def close(self, i: discord.Interaction, b: discord.ui.Button):
         await i.response.send_message("Fermeture dans 5 secondes...")
         await asyncio.sleep(5)
@@ -585,8 +903,7 @@ class CloseView(discord.ui.View):
 
 class VerifyView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="Se vérifier", style=discord.ButtonStyle.success,
-                       custom_id="verify", emoji="✅")
+    @discord.ui.button(label="Se vérifier", style=discord.ButtonStyle.success, custom_id="verify", emoji="✅")
     async def verify(self, i: discord.Interaction, b: discord.ui.Button):
         gid = str(i.guild.id); rid = bot.verif_roles.get(gid)
         role = i.guild.get_role(rid) if rid else None
@@ -610,8 +927,7 @@ class VerifyView(discord.ui.View):
 
 class RulesView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="J'accepte", style=discord.ButtonStyle.success,
-                       custom_id="rules_accept", emoji="✅")
+    @discord.ui.button(label="J'accepte", style=discord.ButtonStyle.success, custom_id="rules_accept", emoji="✅")
     async def accept(self, i: discord.Interaction, b: discord.ui.Button):
         gid = str(i.guild.id); rid = bot.verif_roles.get(gid)
         role = i.guild.get_role(rid) if rid else None
@@ -797,9 +1113,7 @@ async def on_guild_join(guild: discord.Guild):
     bot.spam_cfg[gid] = default_spam_cfg()
     bot.nuke_cfg[gid] = default_nuke_cfg()
     roles  = [r for r in guild.roles if r.name != "@everyone" and not r.managed]
-    texts  = list(guild.text_channels)
-    voices = list(guild.voice_channels)
-    cats   = list(guild.categories)
+    texts  = list(guild.text_channels); voices = list(guild.voice_channels); cats = list(guild.categories)
     if roles or texts:
         data = {
             "roles":  [{"name":r.name,"color":r.color.value} for r in roles],
@@ -807,43 +1121,15 @@ async def on_guild_join(guild: discord.Guild):
             "text":   [{"name":c.name,"cat":c.category.name if c.category else None} for c in texts],
             "voice":  [{"name":c.name,"cat":c.category.name if c.category else None} for c in voices],
         }
-        bname = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        bot.backups.setdefault(gid, {})[bname] = data
-    ch = None
-    if guild.system_channel: ch = guild.system_channel
+        bot.backups.setdefault(gid, {})[f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"] = data
+    ch = guild.system_channel
     if not ch:
         for c in guild.text_channels:
             perms = c.permissions_for(guild.me)
             if perms.send_messages and perms.embed_links:
                 ch = c; break
     if not ch: return
-    e = discord.Embed(
-        title="◈  AEGIS AI — En ligne",
-        description=(
-            "Salut. Je suis **AEGIS AI**, ton assistant Discord intelligent.\n\n"
-            f"{E.LINE}\n\n"
-            "**Ce que je fais vraiment :**\n"
-            "▸ **J'anime ton serveur** — je relance les discussions mortes\n"
-            "▸ **Je réponds** — écris `aegis` ou mentionne-moi\n"
-            "▸ **Je retiens le contexte** — je me souviens de la conversation\n\n"
-            f"{E.LINE}\n\n"
-            "**Et en plus :**\n"
-            "▸ **Modération** — `/mod ban` `/mod kick` `/mod mute`...\n"
-            "▸ **Musique** — `/music play`\n"
-            "▸ **Systèmes** — tickets, vérification, giveaway, sondages\n"
-            "▸ **XP & Stats** — niveaux, classement, profils\n\n"
-            f"{E.LINE}\n\n"
-            "**☢️ Protections activées automatiquement :**\n"
-            "▸ Anti-raid ▸ Anti-spam ▸ Anti-nuke\n\n"
-            "Pour tout voir : `/aide`\n"
-            "*Le protocole est en ligne. Bonne chance.*"
-        ),
-        color=C.NEON_CYAN,
-        timestamp=datetime.now(timezone.utc)
-    )
-    e.set_thumbnail(url=bot.user.display_avatar.url)
-    e.set_footer(text="AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    try: await ch.send(embed=e)
+    try: await ch.send(view=GuildJoinLayout(bot.user))
     except: pass
 
 @bot.event
@@ -874,17 +1160,7 @@ async def on_member_join(member: discord.Member):
         ch = member.guild.get_channel(bot.arrivee[gid])
         if ch:
             count = member.guild.member_count or 0
-            e = discord.Embed(
-                title=f"◈  Bienvenue sur {member.guild.name}",
-                description=(
-                    f"▸ **Membre :** {member.mention}\n"
-                    f"▸ **Compte créé le :** {member.created_at.strftime('%d/%m/%Y')}\n"
-                    f"▸ **Membre numéro :** `#{count}`"
-                ),
-                color=C.NEON_CYAN, timestamp=now)
-            e.set_thumbnail(url=member.display_avatar.url)
-            e.set_footer(text=f"{member.guild.name}  ◈  {count} membres")
-            try: await ch.send(embed=e)
+            try: await ch.send(view=WelcomeLayout(member, count))
             except: pass
 
 @bot.event
@@ -903,13 +1179,10 @@ async def on_member_remove(member: discord.Member):
             if member.joined_at:
                 d = datetime.now(timezone.utc) - member.joined_at.replace(tzinfo=timezone.utc)
                 dur = f"{d.days} jour{'s' if d.days!=1 else ''}"
-            e = discord.Embed(
-                title=f"◈  Au revoir",
-                description=(
-                    f"▸ **Membre :** {member.mention} (`{member}`)\n"
-                    f"▸ **Resté :** {dur or '?'}\n"
-                    f"▸ **Rôles :** {', '.join(roles) if roles else 'Aucun'}"
-                ),
+            e = discord.Embed(title=f"◈  Au revoir",
+                description=(f"▸ **Membre :** {member.mention} (`{member}`)\n"
+                              f"▸ **Resté :** {dur or '?'}\n"
+                              f"▸ **Rôles :** {', '.join(roles) if roles else 'Aucun'}"),
                 color=C.NEON_RED, timestamp=now)
             e.set_thumbnail(url=member.display_avatar.url)
             e.set_footer(text=f"{member.guild.member_count} membres restants  ◈  AEGIS AI")
@@ -926,8 +1199,7 @@ async def on_voice_state_update(member, before, after):
                     f"◈ {member.display_name}", category=after.channel.category)
                 await member.move_to(nc)
             except: pass
-    if (before.channel and before.channel.name.startswith("◈ ")
-            and len(before.channel.members) == 0):
+    if (before.channel and before.channel.name.startswith("◈ ") and len(before.channel.members) == 0):
         try: await before.channel.delete()
         except: pass
 
@@ -979,14 +1251,19 @@ async def on_message(message: discord.Message):
         server_ctx = f"[Serveur: {message.guild.name} | {member_count} membres | Salon: #{message.channel.name}] "
         async with message.channel.typing():
             rep = await ask_groq(server_ctx + q, channel_id=str(message.channel.id))
-        try: await message.reply(f"◉ {rep}")
-        except: pass
+        try:
+            await message.reply(
+                view=AIChatLayout(q, rep, message.author),
+                mention_author=False
+            )
+        except Exception:
+            try: await message.reply(f"◉ {rep}")
+            except: pass
         return
     await bot.process_commands(message)
 
-
 # ══════════════════════════════════════════════
-#  SYSTÈME VÉRIFICATION (CODE ALÉATOIRE)
+#  VÉRIFICATION CODE ALÉATOIRE
 # ══════════════════════════════════════════════
 import string as _string
 
@@ -1020,7 +1297,6 @@ class QuizView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(QuizSelect(gid, choices, role_id))
 
-
 # ══════════════════════════════════════════════
 #  GROUPES DE COMMANDES
 # ══════════════════════════════════════════════
@@ -1044,22 +1320,17 @@ async def ai_chat(i: discord.Interaction, message: str):
     member_count = i.guild.member_count or 0
     ctx = f"[Serveur: {i.guild.name} | {member_count} membres | Salon: #{i.channel.name}] "
     rep = await ask_groq(ctx + message, channel_id=str(i.channel.id))
-    e = emb("◉  AEGIS AI", rep, C.NEON_PINK)
-    e.set_footer(text=f"Question de {i.user.display_name}  ◈  AEGIS AI")
-    await i.followup.send(embed=e)
+    await i.followup.send(view=AIChatLayout(message, rep, i.user))
 
 @ai_group.command(name="relance", description="AEGIS AI relance la conversation dans ce salon")
 @app_commands.default_permissions(manage_messages=True)
 async def ai_relance(i: discord.Interaction):
     await i.response.defer()
-    rep = await ask_groq(
-        f"Le serveur {i.guild.name} est calme. Relance la conversation.",
-        system=AI_SYS_RELANCE
-    )
+    rep = await ask_groq(f"Le serveur {i.guild.name} est calme. Relance la conversation.", system=AI_SYS_RELANCE)
     await i.followup.send(f"◉ {rep}")
 
 @ai_group.command(name="mode", description="Activer/désactiver le mode IA continu dans ce salon")
-@app_commands.describe(activer="Activer le mode IA (AEGIS répond à tous les messages)")
+@app_commands.describe(activer="Activer le mode IA")
 @app_commands.default_permissions(manage_channels=True)
 async def ai_mode(i: discord.Interaction, activer: bool):
     cid = str(i.channel.id)
@@ -1081,13 +1352,8 @@ async def ai_memory_clear(i: discord.Interaction):
 @app_commands.default_permissions(manage_messages=True)
 async def ai_question(i: discord.Interaction):
     await i.response.defer()
-    rep = await ask_groq(
-        "Pose une question fun, originale ou débat à la communauté. Max 1 phrase. Style GLaDOS.",
-        system=AI_SYS_RELANCE
-    )
-    e = emb("◉  Question du jour", rep, C.NEON_PINK)
-    e.set_footer(text="Posée par AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    await i.followup.send(embed=e)
+    rep = await ask_groq("Pose une question fun, originale ou débat. Max 1 phrase. Style GLaDOS.", system=AI_SYS_RELANCE)
+    await i.followup.send(view=QuestionLayout(rep))
 
 bot.tree.add_command(ai_group)
 
@@ -1106,7 +1372,7 @@ async def mod_ban(i: discord.Interaction, membre: discord.Member, raison: str="A
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.ban(reason=raison)
-        await i.response.send_message(embed=emb(f"⛔  Banni", f"{membre.mention}\n**Raison :** {raison}", C.NEON_RED))
+        await i.response.send_message(view=ModActionLayout("⛔", "Banni", membre, raison, color=C.NEON_RED))
         await log(i.guild, "Ban", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_RED)
     except discord.Forbidden:
         await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
@@ -1130,7 +1396,7 @@ async def mod_kick(i: discord.Interaction, membre: discord.Member, raison: str="
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.kick(reason=raison)
-        await i.response.send_message(embed=emb(f"⚡  Expulsé", f"{membre.mention}\n**Raison :** {raison}", C.NEON_ORANGE))
+        await i.response.send_message(view=ModActionLayout("⚡", "Expulsé", membre, raison, color=C.NEON_ORANGE))
         await log(i.guild, "Kick", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_ORANGE)
     except discord.Forbidden:
         await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
@@ -1143,7 +1409,9 @@ async def mod_mute(i: discord.Interaction, membre: discord.Member, duree: int=10
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.timeout(datetime.now(timezone.utc)+timedelta(minutes=duree))
-        await i.response.send_message(embed=emb(f"🔇  Muté", f"{membre.mention} — **{duree} min**", C.NEON_BLUE))
+        await i.response.send_message(view=ModActionLayout(
+            "🔇", "Muté", membre, "Timeout Discord",
+            extra=f"**Durée** `{duree} min`", color=C.NEON_BLUE))
     except discord.Forbidden:
         await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
 
@@ -1164,20 +1432,18 @@ async def mod_warn(i: discord.Interaction, membre: discord.Member, raison: str="
     bot.warnings.setdefault(gid, {}).setdefault(uid, []).append(
         {"r": raison, "by": str(i.user.id), "at": datetime.now(timezone.utc).isoformat()})
     count = len(bot.warnings[gid][uid])
-    e = emb(f"⚠️  Avertissement",
-            f"**Membre :** {membre.mention}\n**Raison :** {raison}\n**Total :** {count}", C.NEON_ORANGE)
     sanction = None
     if count == 3:
-        try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=1),reason="3 warns"); sanction="Mute 1h"
+        try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=1),reason="3 warns"); sanction="🔇 Mute 1h"
         except: pass
     elif count == 5:
-        try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=24),reason="5 warns"); sanction="Mute 24h"
+        try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=24),reason="5 warns"); sanction="🔇 Mute 24h"
         except: pass
     elif count >= 7:
-        try: await membre.kick(reason="7 warns"); sanction="Kick"
+        try: await membre.kick(reason="7 warns"); sanction="⚡ Kick"
         except: pass
-    if sanction: e.add_field(name="⚡ Sanction auto", value=sanction)
-    await i.response.send_message(embed=e)
+    extra = f"**Total warns** `{count}`" + (f"\n**Sanction auto** {sanction}" if sanction else "")
+    await i.response.send_message(view=ModActionLayout("⚠️", "Avertissement", membre, raison, extra=extra, color=C.NEON_ORANGE))
     await log(i.guild, "Warn", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_ORANGE)
     try: await membre.send(embed=emb(f"⚠️  Avertissement reçu",
         f"**Serveur :** {i.guild.name}\n**Raison :** {raison}\n**Total :** {count}", C.NEON_ORANGE))
@@ -1300,14 +1566,11 @@ async def music_play(i: discord.Interaction, recherche: str):
     bot.queues.setdefault(gid, []).append(track)
     if not vc.is_playing() and not vc.is_paused():
         await next_track(gid)
-        e = emb(f"♪  Lecture", f"**{track['title']}**\n⏱️ `{fmt(track['duration'])}`", C.NEON_CYAN)
-        if track.get('thumb'): e.set_thumbnail(url=track['thumb'])
-        if track.get('webpage'): e.add_field(name="Lien", value=f"[YouTube]({track['webpage']})")
+        await i.edit_original_response(embed=None, view=MusicLayout(track, "▶ Lecture"))
     else:
         pos = len(bot.queues.get(gid, []))
-        e = emb(f"♪  Ajouté", f"**{track['title']}**\n📋 Position #{pos}", C.NEON_GOLD)
-        if track.get('thumb'): e.set_thumbnail(url=track['thumb'])
-    await i.edit_original_response(embed=e)
+        track["_pos"] = pos
+        await i.edit_original_response(embed=None, view=MusicLayout(track, f"📋 Ajouté #{pos}"))
 
 @music_group.command(name="pause", description="Mettre en pause")
 async def music_pause(i: discord.Interaction):
@@ -1360,10 +1623,7 @@ async def music_queue(i: discord.Interaction):
 async def music_np(i: discord.Interaction):
     np = bot.now_playing.get(str(i.guild.id))
     if not np: return await i.response.send_message(embed=inf("Rien en cours"), ephemeral=True)
-    e = emb(f"♪  En cours", f"**{np['title']}**\n⏱️ `{fmt(np['duration'])}`", C.NEON_CYAN)
-    if np.get('thumb'): e.set_thumbnail(url=np['thumb'])
-    if np.get('webpage'): e.add_field(name="Lien", value=f"[YouTube]({np['webpage']})")
-    await i.response.send_message(embed=e)
+    await i.response.send_message(view=MusicLayout(np, "▶ En cours"))
 
 @music_group.command(name="volume", description="Régler le volume (0-100)")
 @app_commands.describe(niveau="Volume entre 0 et 100")
@@ -1408,10 +1668,7 @@ async def fun_sondage(i: discord.Interaction, question: str):
 @app_commands.describe(membre="Le membre (vide = toi)")
 async def fun_avatar(i: discord.Interaction, membre: Optional[discord.Member]=None):
     m = membre or i.user
-    e = discord.Embed(title=f"◈  Avatar de {m.display_name}", color=C.NEON_CYAN)
-    e.set_image(url=m.display_avatar.with_size(1024).url)
-    e.set_footer(text=f"ID : {m.id}  ◈  AEGIS AI")
-    await i.response.send_message(embed=e)
+    await i.response.send_message(view=AvatarLayout(m))
 
 @fun_group.command(name="dire", description="Faire parler le bot")
 @app_commands.describe(message="Le message", salon="Salon cible (vide = actuel)")
@@ -1485,50 +1742,28 @@ stats_group = StatsGroup()
 async def stats_rank(i: discord.Interaction, membre: Optional[discord.Member]=None):
     m = membre or i.user; gid = str(i.guild.id); d = get_xp(gid, str(m.id))
     lv, xp = d["level"], d["xp"]; req = xp_req(lv+1)
-    pct = int(xp/req*100) if req > 0 else 0
-    bar = "█"*(pct//10) + "░"*(10-pct//10)
-    su  = sorted(bot.xp_data.get(gid,{}).items(), key=lambda x:(x[1]["level"],x[1]["xp"]), reverse=True)
-    rk  = next((idx+1 for idx,(uid,_) in enumerate(su) if uid==str(m.id)), "?")
-    e = discord.Embed(title=f"◆  Rang de {m.display_name}", color=C.NEON_GOLD, timestamp=datetime.now(timezone.utc))
-    e.set_thumbnail(url=m.display_avatar.url)
-    e.add_field(name="Niveau",      value=f"**{lv}**",           inline=True)
-    e.add_field(name="XP",          value=f"**{xp}** / {req}",   inline=True)
-    e.add_field(name="Classement",  value=f"**#{rk}**",           inline=True)
-    e.add_field(name="Messages",    value=f"**{d['messages']}**", inline=True)
-    e.add_field(name="Progression", value=f"`{bar}` {pct}%",      inline=False)
-    e.set_footer(text="AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    await i.response.send_message(embed=e)
+    su = sorted(bot.xp_data.get(gid,{}).items(), key=lambda x:(x[1]["level"],x[1]["xp"]), reverse=True)
+    rk = next((idx+1 for idx,(uid,_) in enumerate(su) if uid==str(m.id)), "?")
+    await i.response.send_message(view=RankLayout(m, lv, xp, req, rk, d["messages"]))
 
 @stats_group.command(name="top", description="Top 10 XP du serveur")
 async def stats_top(i: discord.Interaction):
     gid = str(i.guild.id); gxp = bot.xp_data.get(gid, {})
     if not gxp:
         return await i.response.send_message(embed=inf("Classement vide"), ephemeral=True)
-    su     = sorted(gxp.items(), key=lambda x:(x[1]["level"],x[1]["xp"]), reverse=True)[:10]
-    medals = ["🥇","🥈","🥉"] + [f"**#{idx}**" for idx in range(4,11)]
-    desc   = ""
-    for idx, (uid, d) in enumerate(su):
-        m    = i.guild.get_member(int(uid))
+    su = sorted(gxp.items(), key=lambda x:(x[1]["level"],x[1]["xp"]), reverse=True)[:10]
+    entries = []
+    for uid, d in su:
+        m = i.guild.get_member(int(uid))
         name = m.display_name if m else f"ID:{uid}"
-        desc += f"{medals[idx]} **{name}** — Niveau {d['level']} ({d['xp']} XP)\n"
-    await i.response.send_message(embed=emb("◆  Top 10 XP", desc, C.NEON_GOLD))
+        entries.append((name, d["level"], d["xp"]))
+    await i.response.send_message(view=TopLayout(entries))
 
 @stats_group.command(name="userinfo", description="Informations sur un membre")
 @app_commands.describe(membre="Le membre (vide = toi)")
 async def stats_userinfo(i: discord.Interaction, membre: Optional[discord.Member]=None):
     m = membre or i.user; gid = str(i.guild.id); d = get_xp(gid, str(m.id))
-    roles = [r.mention for r in m.roles if r.name != "@everyone"]
-    e = discord.Embed(title=f"◈  {m.display_name}", color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
-    e.set_thumbnail(url=m.display_avatar.url)
-    e.add_field(name="Discord",    value=str(m),                                       inline=True)
-    e.add_field(name="ID",         value=f"`{m.id}`",                                  inline=True)
-    e.add_field(name="Bot",        value="✅" if m.bot else "❌",                       inline=True)
-    e.add_field(name="Créé le",    value=m.created_at.strftime("%d/%m/%Y"),            inline=True)
-    e.add_field(name="Rejoint le", value=m.joined_at.strftime("%d/%m/%Y") if m.joined_at else "?", inline=True)
-    e.add_field(name="◆ Niveau",   value=f"**{d['level']}** ({d['xp']} XP)",           inline=True)
-    e.add_field(name=f"◉ Rôles ({len(roles)})", value=" ".join(roles[:10]) or "Aucun", inline=False)
-    e.set_footer(text="AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    await i.response.send_message(embed=e)
+    await i.response.send_message(view=UserInfoLayout(m, d["level"], d["xp"]))
 
 @stats_group.command(name="serverinfo", description="Informations sur le serveur")
 async def stats_serverinfo(i: discord.Interaction):
@@ -1536,17 +1771,7 @@ async def stats_serverinfo(i: discord.Interaction):
     total = g.member_count or len(g.members) or 0
     bots  = sum(1 for m in g.members if m.bot)
     humans = max(0, total - bots)
-    e = discord.Embed(title=f"◈  {g.name}", color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
-    if g.icon: e.set_thumbnail(url=g.icon.url)
-    e.add_field(name="ID",           value=f"`{g.id}`",                              inline=True)
-    e.add_field(name="Propriétaire", value=g.owner.mention if g.owner else "?",      inline=True)
-    e.add_field(name="Créé le",      value=g.created_at.strftime("%d/%m/%Y"),        inline=True)
-    e.add_field(name="Membres",      value=f"**{humans}** humains / **{bots}** bots",inline=True)
-    e.add_field(name="Salons",       value=f"**{len(g.text_channels)}** texte / **{len(g.voice_channels)}** vocal", inline=True)
-    e.add_field(name="Rôles",        value=f"**{len(g.roles)}**",                    inline=True)
-    e.add_field(name="Boosts",       value=f"**{g.premium_subscription_count}** (Niv. {g.premium_tier})", inline=True)
-    e.set_footer(text="AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    await i.response.send_message(embed=e)
+    await i.response.send_message(view=ServerInfoLayout(g, humans, bots))
 
 bot.tree.add_command(stats_group)
 
@@ -1577,7 +1802,7 @@ async def server_setup(i: discord.Interaction, style: str="communaute"):
         cat = discord.utils.get(g.categories, name=cat_name)
         if not cat:
             try:
-                ow  = {g.default_role:discord.PermissionOverwrite(view_channel=False)} if "STAFF" in cat_name or "MJ" in cat_name else {}
+                ow = {g.default_role:discord.PermissionOverwrite(view_channel=False)} if "STAFF" in cat_name or "MJ" in cat_name else {}
                 cat = await g.create_category(cat_name, overwrites=ow); await asyncio.sleep(0.4)
             except: continue
         for cn in texts:
@@ -1752,7 +1977,7 @@ async def server_verif_quiz(i: discord.Interaction, role: discord.Role,
 @app_commands.default_permissions(administrator=True)
 async def server_backup(i: discord.Interaction, nom: Optional[str]=None):
     await i.response.defer(ephemeral=True)
-    g    = i.guild
+    g = i.guild
     name = nom or f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     roles  = [r for r in g.roles if r.name != "@everyone" and not r.managed]
     texts  = list(g.text_channels); voices = list(g.voice_channels); cats = list(g.categories)
@@ -1783,7 +2008,7 @@ async def server_restore(i: discord.Interaction, nom: Optional[str]=None):
         return await i.followup.send(embed=inf(f"Sauvegardes ({len(saves)})", desc), ephemeral=True)
     data = saves.get(nom)
     if not data:
-        return await i.followup.send(embed=er("Introuvable", "Utilise `/server restore` sans nom pour voir la liste."), ephemeral=True)
+        return await i.followup.send(embed=er("Introuvable"), ephemeral=True)
     r = {"roles":0,"channels":0}
     for x in data.get("roles",[]):
         if not discord.utils.get(i.guild.roles, name=x["name"]):
@@ -2096,26 +2321,7 @@ bot.tree.add_command(events_group)
 # ══════════════════════════════════════════════
 @bot.tree.command(name="aide", description="Liste de toutes les commandes AEGIS AI")
 async def aide(i: discord.Interaction):
-    e = discord.Embed(
-        title="◈  AEGIS AI — Commandes",
-        description=(
-            "**AEGIS AI** anime ton serveur grâce à l'IA.\n"
-            "Il répond, relance les discussions et rend ton serveur actif.\n"
-            "Modération, musique et plein d'autres systèmes intégrés.\n\n"
-            "─────────────────────"
-        ),
-        color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="◉  /ai",      value="`chat` `relance` `mode` `memory` `question`",          inline=False)
-    e.add_field(name="⛔  /mod",    value="`ban` `unban` `kick` `mute` `unmute` `warn` `unwarn` `warns` `purge` `rename` `lock` `unlock` `slowmode`", inline=False)
-    e.add_field(name="♪  /music",  value="`play` `pause` `resume` `skip` `stop` `queue` `nowplaying` `volume`", inline=False)
-    e.add_field(name="▶  /fun",    value="`tirage` `sondage_rapide` `avatar` `dire` `embed` `dmall`", inline=False)
-    e.add_field(name="◆  /stats",  value="`rank` `top` `userinfo` `serverinfo`",                   inline=False)
-    e.add_field(name="⚙️  /server", value="`setup` `arrivee` `depart` `panel` `reglement` `verification` `verification_quiz` `backup` `restore` `autorole` `rolemenu` `tempvoice` `antiraid` `antispam` `antinuke` `suggestion` `creersalon` `creervoice` `supprimersalon` `creerole` `addrole` `removerole` `roleall`", inline=False)
-    e.add_field(name="🎉  /events", value="`giveaway` `reroll` `poll`",                             inline=False)
-    e.add_field(name="☢️  Owner",   value="`/admin_panel`",                                         inline=False)
-    e.add_field(name="◉  IA directe", value="Écris **aegis** dans un message ou mentionne **@AEGIS AI**", inline=False)
-    e.set_footer(text="AEGIS AI  ◈  discord.gg/6rN8pneGdy")
-    await i.response.send_message(embed=e)
+    await i.response.send_message(view=AideLayout())
 
 @bot.tree.command(name="ping", description="Latence du bot")
 async def ping(i: discord.Interaction):

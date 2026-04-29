@@ -80,7 +80,7 @@ class AIChatLayout(discord.ui.LayoutView):
                 discord.ui.TextDisplay(reponse),
                 accessory=discord.ui.Thumbnail(user.display_avatar.url)
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 f"-# 💬 {user.display_name} — {ts}  ◈  discord.gg/6rN8pneGdy"
             ),
@@ -130,11 +130,11 @@ class UserInfoLayout(discord.ui.LayoutView):
                 ),
                 accessory=discord.ui.Thumbnail(member.display_avatar.url)
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 f"**◉ Rôles ({len(roles)})**\n" + (" ".join(roles[:10]) if roles else "Aucun")
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_CYAN
         )
@@ -152,9 +152,9 @@ class TopLayout(discord.ui.LayoutView):
         )
         container = discord.ui.Container(
             discord.ui.TextDisplay(f"## ◆  Top 10 XP"),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(lines or "*Aucun joueur pour l'instant.*"),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_GOLD
         )
@@ -186,7 +186,7 @@ class ServerInfoLayout(discord.ui.LayoutView):
 
         container = discord.ui.Container(
             section,
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_CYAN
         )
@@ -215,7 +215,7 @@ class AideLayout(discord.ui.LayoutView):
                 ),
                 accessory=discord.ui.Thumbnail("https://cdn.discordapp.com/emojis/1234567890.png")
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## ▶  /fun\n"
                 "`tirage` · `sondage_rapide` · `avatar` · `dire` · `embed` · `dmall`\n\n"
@@ -226,14 +226,14 @@ class AideLayout(discord.ui.LayoutView):
                 "## 🎉  /events\n"
                 "`giveaway` · `reroll` · `poll`"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## ◉  IA directe\n"
                 "Écris **aegis** dans un message ou mentionne **@AEGIS AI**\n\n"
                 "## ☢️  Owner\n"
                 "`/admin_panel`"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_CYAN
         )
@@ -255,7 +255,7 @@ class WelcomeLayout(discord.ui.LayoutView):
                 ),
                 accessory=discord.ui.Thumbnail(member.display_avatar.url)
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# {member.guild.name}  ◈  {count} membres"),
             accent_color=C.NEON_CYAN
         )
@@ -272,7 +272,7 @@ class GuildJoinLayout(discord.ui.LayoutView):
                 "Salut. Je suis **AEGIS AI**, ton assistant Discord intelligent.\n"
                 f"{LINE}"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## Ce que je fais vraiment\n"
                 "▸ **J'anime ton serveur** — je relance les discussions mortes\n"
@@ -280,7 +280,7 @@ class GuildJoinLayout(discord.ui.LayoutView):
                 "▸ **Je retiens le contexte** — je me souviens de la conversation\n"
                 f"{LINE}"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## Et en plus\n"
                 "▸ **Modération** — `/mod ban` `/mod kick` `/mod mute`...\n"
@@ -289,14 +289,14 @@ class GuildJoinLayout(discord.ui.LayoutView):
                 "▸ **XP & Stats** — niveaux, classement, profils\n"
                 f"{LINE}"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## ☢️ Protections activées automatiquement\n"
                 "▸ Anti-raid  ▸ Anti-spam  ▸ Anti-nuke\n\n"
                 "Pour tout voir : `/aide`\n"
                 "*Le protocole est en ligne. Bonne chance.*"
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_CYAN
         )
@@ -309,9 +309,9 @@ class QuestionLayout(discord.ui.LayoutView):
         super().__init__()
         container = discord.ui.Container(
             discord.ui.TextDisplay(f"## ◉  Question du jour"),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(question),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# Posée par AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_PINK
         )
@@ -345,7 +345,7 @@ class MusicLayout(discord.ui.LayoutView):
 
         container = discord.ui.Container(
             section,
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=C.NEON_CYAN
         )
@@ -370,7 +370,7 @@ class ModActionLayout(discord.ui.LayoutView):
                 discord.ui.TextDisplay(content),
                 accessory=discord.ui.Thumbnail(membre.display_avatar.url)
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
             accent_color=color
         )
@@ -406,7 +406,7 @@ class AvatarLayout(discord.ui.LayoutView):
                     description=f"Avatar de {member.display_name}"
                 )
             ),
-            discord.ui.Separator(spacing=discord.SeparatorSpacingSize.small),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# ID : {member.id}  ◈  AEGIS AI"),
             accent_color=C.NEON_CYAN
         )

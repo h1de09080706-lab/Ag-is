@@ -2335,48 +2335,237 @@ async def aide(i: discord.Interaction):
 async def ping(i: discord.Interaction):
     await i.response.send_message(embed=inf("Pong !", f"⚡ `{round(bot.latency*1000)} ms`"))
 
+# ══════════════════════════════════════════════
+#  /admin_panel — Panel Owner avec pagination
+# ══════════════════════════════════════════════
+class AdminPanelView(discord.ui.View):
+    def __init__(self, owner_id: int, guilds: list, stats: dict):
+        super().__init__(timeout=300)
+        self.owner_id = owner_id
+        self.guilds = guilds
+        self.stats = stats
+        self.page = 0
+        self.per_page = 15
+
+    @property
+    def total_pages(self) -> int:
+        return max(1, (len(self.guilds) + self.per_page - 1) // self.per_page)
+
+    def build_embed(self) -> discord.Embed:
+        g_count = len(self.guilds)
+        e = discord.Embed(
+            title="☢️  AEGIS AI — Panel Admin Owner",
+            color=C.AEGIS_PINK,
+            timestamp=datetime.now(timezone.utc),
+        )
+        e.set_thumbnail(url=bot.user.display_avatar.url)
+        e.set_footer(text=f"AEGIS AI  ◈  Owner Only  ◈  Page {self.page+1}/{self.total_pages}")
+        e.add_field(
+            name="◈  Stats globales",
+            value=(f"**Serveurs :** `{g_count}`\n"
+                   f"**Humains :** `{self.stats['humans']}`\n"
+                   f"**Latence :** `{round(bot.latency*1000)} ms`"),
+            inline=True)
+        e.add_field(
+            name="🛡️  Protections",
+            value=(f"**Anti-nuke :** `{self.stats['nuke']}`\n"
+                   f"**Anti-spam :** `{self.stats['spam']}`\n"
+                   f"**Anti-raid :** `{self.stats['raid']}`"),
+            inline=True)
+        e.add_field(
+            name="📊  Activité",
+            value=(f"**Joueurs XP :** `{self.stats['xp']}`\n"
+                   f"**Giveaways :** `{self.stats['ga']}`\n"
+                   f"**Sondages :** `{len(bot.polls)}`"),
+            inline=True)
+        start = self.page * self.per_page
+        end = min(start + self.per_page, g_count)
+        lines = []
+        for idx, g in enumerate(self.guilds[start:end], start=start+1):
+            lines.append(f"`{idx:>3}.` **{g.name}** — `{g.member_count or 0}` membres  `ID: {g.id}`")
+        e.add_field(
+            name=f"📋  Serveurs ({g_count})",
+            value="\n".join(lines) if lines else "*Aucun serveur*",
+            inline=False)
+        invite = f"https://discord.com/oauth2/authorize?client_id={bot.application_id}&permissions=8&integration_type=0&scope=bot"
+        e.add_field(
+            name="🔗  Liens",
+            value=f"[Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
+            inline=False)
+        return e
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Accès refusé.", ephemeral=True)
+            return False
+        return True
+
+    def _refresh_buttons(self):
+        self.prev_btn.disabled = (self.page == 0)
+        self.next_btn.disabled = (self.page >= self.total_pages - 1)
+
+    @discord.ui.button(label="◀ Précédent", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+        self._refresh_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(label="Suivant ▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page < self.total_pages - 1:
+            self.page += 1
+        self._refresh_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(label="🔄 Rafraîchir", style=discord.ButtonStyle.primary)
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.guilds = sorted(bot.guilds, key=lambda x: x.member_count or 0, reverse=True)
+        self.stats = _compute_admin_stats()
+        if self.page >= self.total_pages:
+            self.page = self.total_pages - 1
+        self._refresh_buttons()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+
+def _compute_admin_stats() -> dict:
+    guilds = bot.guilds
+    total_users = sum(g.member_count or 0 for g in guilds)
+    return {
+        "humans": max(0, total_users - len(guilds)),
+        "nuke":   sum(1 for c in bot.nuke_cfg.values() if c.get("enabled")),
+        "spam":   sum(1 for c in bot.spam_cfg.values() if c.get("enabled")),
+        "raid":   sum(1 for c in bot.raid_cfg.values() if c.get("enabled")),
+        "xp":     sum(len(v) for v in bot.xp_data.values()),
+        "ga":     sum(1 for g in bot.giveaways.values() if not g.get("ended")),
+    }
+
+
 @bot.tree.command(name="admin_panel", description="Panel d'administration [Owner uniquement]")
 async def admin_panel(i: discord.Interaction):
     if BOT_OWNER_ID == 0:
         return await i.response.send_message(embed=er("BOT_OWNER_ID manquant"), ephemeral=True)
     if i.user.id != BOT_OWNER_ID:
-        return await i.response.send_message(embed=er("Accès refusé","Réservé au propriétaire."), ephemeral=True)
-    await i.response.defer(ephemeral=True)
-    guilds       = bot.guilds
-    total_users  = sum(g.member_count or 0 for g in guilds)
-    total_bots   = len(guilds)
-    total_humans = max(0, total_users - total_bots)
-    nuke_on      = sum(1 for c in bot.nuke_cfg.values() if c.get("enabled"))
-    spam_on      = sum(1 for c in bot.spam_cfg.values() if c.get("enabled"))
-    raid_on      = sum(1 for c in bot.raid_cfg.values() if c.get("enabled"))
-    xp_users     = sum(len(v) for v in bot.xp_data.values())
-    ga_actifs    = sum(1 for g in bot.giveaways.values() if not g.get("ended"))
-    e = discord.Embed(title="☢️  AEGIS AI — Panel Admin Owner",color=C.NEON_PINK,timestamp=datetime.now(timezone.utc))
-    e.set_thumbnail(url=bot.user.display_avatar.url)
-    e.set_footer(text="AEGIS AI  ◈  Owner Only")
-    e.add_field(name="◈  Stats globales",
-        value=f"**Serveurs :** `{len(guilds)}`\n**Humains :** `{total_humans}`\n**Latence :** `{round(bot.latency*1000)} ms`",
-        inline=True)
-    e.add_field(name="🛡️  Protections",
-        value=f"**Anti-nuke :** `{nuke_on}`\n**Anti-spam :** `{spam_on}`\n**Anti-raid :** `{raid_on}`",
-        inline=True)
-    e.add_field(name="📊  Activité",
-        value=f"**Joueurs XP :** `{xp_users}`\n**Giveaways :** `{ga_actifs}`\n**Sondages :** `{len(bot.polls)}`",
-        inline=True)
-    srv_sorted = sorted(guilds, key=lambda x: x.member_count or 0, reverse=True)
-    chunk_size = 8; added_fields = 0
-    for chunk_idx in range(0, len(srv_sorted), chunk_size):
-        if added_fields >= 3: break
-        chunk = srv_sorted[chunk_idx:chunk_idx+chunk_size]
-        srv_txt = "".join(f"`{chunk_idx+idx+1}.` **{g.name}** — `{g.member_count or 0}` membres\n" for idx,g in enumerate(chunk))
-        fname = f"📋  Serveurs ({len(guilds)})" if chunk_idx==0 else "📋  Suite..."
-        e.add_field(name=fname, value=srv_txt or "Aucun", inline=False)
-        added_fields += 1
-    invite = f"https://discord.com/oauth2/authorize?client_id={bot.application_id}&permissions=8&integration_type=0&scope=bot"
-    e.add_field(name="🔗  Liens",
-        value=f"[Railway](https://railway.app) • [Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
-        inline=False)
-    await i.followup.send(embed=e, ephemeral=True)
+        return await i.response.send_message(embed=er("Accès refusé", "Réservé au propriétaire."), ephemeral=True)
+    guilds = sorted(bot.guilds, key=lambda x: x.member_count or 0, reverse=True)
+    view = AdminPanelView(BOT_OWNER_ID, guilds, _compute_admin_stats())
+    view._refresh_buttons()
+    await i.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
+
+
+# ══════════════════════════════════════════════
+#  /owner_dmall_ultime — DM ALL members ALL servers (Owner only)
+# ══════════════════════════════════════════════
+class DMAllUltimateConfirm(discord.ui.View):
+    def __init__(self, owner_id: int, message: str, targets: list):
+        super().__init__(timeout=60)
+        self.owner_id = owner_id
+        self.message = message
+        self.targets = targets
+        self.confirmed = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Accès refusé.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Confirmer & envoyer", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = True
+        for c in self.children:
+            c.disabled = True
+        await interaction.response.edit_message(
+            embed=inf("📨  DM Ultime en cours…", f"Envoi à **{len(self.targets)}** membres.\nÇa peut prendre un moment."),
+            view=self,
+        )
+        self.stop()
+
+    @discord.ui.button(label="✖ Annuler", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for c in self.children:
+            c.disabled = True
+        await interaction.response.edit_message(embed=warn("Annulé", "Aucun DM envoyé."), view=self)
+        self.stop()
+
+
+@bot.tree.command(name="owner_dmall_ultime", description="[OWNER] DM à tous les membres de tous les serveurs")
+@app_commands.describe(message="Le message à envoyer en DM à tous")
+async def owner_dmall_ultime(i: discord.Interaction, message: str):
+    if BOT_OWNER_ID == 0 or i.user.id != BOT_OWNER_ID:
+        return await i.response.send_message(embed=er("Accès refusé", "Réservé au propriétaire."), ephemeral=True)
+    seen = set()
+    targets = []
+    for g in bot.guilds:
+        for m in g.members:
+            if m.bot or m.id == BOT_OWNER_ID or m.id in seen:
+                continue
+            seen.add(m.id)
+            targets.append(m)
+    if not targets:
+        return await i.response.send_message(embed=er("Aucun membre trouvé"), ephemeral=True)
+    preview = discord.Embed(
+        title="⚠️  DM Ultime — Confirmation requise",
+        description=(f"Tu es sur le point d'envoyer un DM à **{len(targets)}** membres uniques "
+                     f"répartis sur **{len(bot.guilds)}** serveurs.\n\n"
+                     f"**Message :**\n> {message[:500]}\n\n"
+                     f"⏱  Rate-limit : 1.5s/DM → durée estimée ≈ **{round(len(targets)*1.5/60)} min**\n"
+                     f"🛑  Auto-stop activé si >30 % d'échecs d'affilée (protection anti-ban)."),
+        color=C.NEON_RED,
+    )
+    preview.set_footer(text="⚠️  Usage massif = risque de ban Discord. Utilise avec raison valable.")
+    view = DMAllUltimateConfirm(BOT_OWNER_ID, message, targets)
+    await i.response.send_message(embed=preview, view=view, ephemeral=True)
+    await view.wait()
+    if not view.confirmed:
+        return
+    e_dm = discord.Embed(
+        title="◈  Message de AEGIS AI",
+        description=message,
+        color=C.AEGIS_PINK,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e_dm.set_footer(text="AEGIS AI  ◈  Message du propriétaire")
+    if bot.user.display_avatar:
+        e_dm.set_thumbnail(url=bot.user.display_avatar.url)
+    sent = failed = 0
+    recent_window = []
+    stopped_reason = None
+    idx = 0
+    for idx, m in enumerate(targets, 1):
+        try:
+            await m.send(embed=e_dm)
+            sent += 1
+            recent_window.append(True)
+        except Exception:
+            failed += 1
+            recent_window.append(False)
+        if len(recent_window) > 20:
+            recent_window.pop(0)
+        if len(recent_window) >= 20:
+            fail_rate = recent_window.count(False) / len(recent_window)
+            if fail_rate > 0.30:
+                stopped_reason = f"Trop d'échecs consécutifs ({int(fail_rate*100)} %). Stoppé pour protéger le bot."
+                break
+        if idx % 25 == 0:
+            try:
+                await i.edit_original_response(
+                    embed=inf("📨  DM Ultime en cours…",
+                              f"Progression : **{idx}/{len(targets)}**\n"
+                              f"✅ Envoyés : `{sent}`  •  ❌ Échoués : `{failed}`"),
+                )
+            except Exception:
+                pass
+        await asyncio.sleep(1.5)
+    final = ok("DM Ultime terminé",
+               f"✅ Envoyés : **{sent}**\n❌ Échoués : **{failed}**\n📊 Total : **{len(targets)}**")
+    if stopped_reason:
+        final = warn("DM Ultime arrêté",
+                     f"{stopped_reason}\n\n✅ Envoyés : **{sent}**\n❌ Échoués : **{failed}**\n📊 Total traités : **{idx}/{len(targets)}**")
+    try:
+        await i.edit_original_response(embed=final, view=None)
+    except Exception:
+        await i.followup.send(embed=final, ephemeral=True)
 
 # ══════════════════════════════════════════════
 #  RUN

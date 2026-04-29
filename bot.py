@@ -19,7 +19,7 @@ Requirements:
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import os, logging, asyncio, random, re, aiohttp
+import os, logging, asyncio, random, re, aiohttp, json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from collections import defaultdict, deque
@@ -29,6 +29,46 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger('AegisAI')
 
 BOT_OWNER_ID = int(os.environ.get('BOT_OWNER_ID', '0'))
+
+# ══════════════════════════════════════════════
+#  PERSISTANCE JSON  (Railway Volume conseillé)
+#  Configure DATA_PATH=/data/aegis.json sur Railway
+#  + monte un Volume sur /data pour que ça survive aux redeploys
+# ══════════════════════════════════════════════
+DATA_PATH = os.environ.get('DATA_PATH', '/data/aegis.json')
+if not os.path.isdir(os.path.dirname(DATA_PATH)):
+    DATA_PATH = './aegis_data.json'  # fallback local
+
+PERSIST_KEYS = [
+    'giveaways', 'polls', 'warnings', 'xp_data', 'arrivee', 'depart_ch',
+    'auto_roles', 'verif_roles', 'logs_ch', 'ticket_cfg', 'temp_voices',
+    'raid_cfg', 'spam_cfg', 'nuke_cfg', 'backups', 'verif_quiz',
+    'logs_filters', 'tempbans', 'mod_history', 'nuke_paused_until',
+]
+
+def _load_data() -> dict:
+    try:
+        with open(DATA_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            logger.info(f"💾 Données chargées depuis {DATA_PATH}")
+            return data
+    except FileNotFoundError:
+        logger.info(f"💾 Pas de fichier {DATA_PATH}, démarrage vierge")
+        return {}
+    except Exception as e:
+        logger.error(f"💾 Erreur chargement: {e}")
+        return {}
+
+def _save_data():
+    try:
+        snapshot = {k: getattr(bot, k, {}) for k in PERSIST_KEYS}
+        os.makedirs(os.path.dirname(DATA_PATH) or '.', exist_ok=True)
+        tmp = DATA_PATH + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(snapshot, f, default=str, ensure_ascii=False)
+        os.replace(tmp, DATA_PATH)
+    except Exception as e:
+        logger.error(f"💾 Erreur sauvegarde: {e}")
 
 # ══════════════════════════════════════════════
 #  THÈME NÉON
@@ -214,29 +254,29 @@ class AideLayout(discord.ui.LayoutView):
             discord.ui.Separator(),
             discord.ui.TextDisplay(
                 "## ◉  /ai\n"
-                "`chat` · `relance` · `mode` · `memory` · `question`\n\n"
+                "`chat` · `relance` · `mode` · `memory` · `question` · `resume`\n\n"
                 "## ⛔  /mod\n"
-                "`ban` · `unban` · `kick` · `mute` · `unmute` · `warn` · `unwarn` · `warns` · `purge` · `rename` · `lock` · `unlock` · `slowmode`\n\n"
+                "`ban` · `unban` · `kick` · `mute` · `unmute` · `tempban` · `warn` · `unwarn` · `warns` · `historique` · `purge` · `rename` · `lock` · `unlock` · `slowmode`\n\n"
                 "## ♪  /music\n"
-                "`play` · `pause` · `resume` · `skip` · `stop` · `queue` · `nowplaying` · `volume`"
+                "`play` · `pause` · `resume` · `skip` · `stop` · `queue` · `nowplaying` · `volume` · `lyrics`"
             ),
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## ▶  /fun\n"
-                "`tirage` · `sondage_rapide` · `avatar` · `dire` · `embed` · `dmall`\n\n"
+                "`tirage` · `sondage_rapide` · `avatar` · `dire` · `embed` · `dmall` · `ia_image`\n\n"
                 "## ◆  /stats\n"
                 "`rank` · `top` · `userinfo` · `serverinfo`\n\n"
                 "## ⚙️  /server\n"
-                "`setup` · `arrivee` · `depart` · `panel` · `reglement` · `verification` · `verification_quiz` · `backup` · `restore` · `autorole` · `rolemenu` · `tempvoice` · `antiraid` · `antispam` · `antinuke` · `suggestion` · `creersalon` · `creervoice` · `supprimersalon` · `creerole` · `addrole` · `removerole` · `roleall`\n\n"
+                "`setup` · `arrivee` · `depart` · `panel` · `reglement` · `verification` · `verification_quiz` · `backup` · `restore` · `autorole` · `rolemenu` · `tempvoice` · `antiraid` · `antispam` · `antinuke` · `antinuke_pause` · `logs_filter` · `suggestion` · `creersalon` · `creervoice` · `supprimersalon` · `creerole` · `addrole` · `removerole` · `roleall`\n\n"
                 "## 🎉  /events\n"
-                "`giveaway` · `reroll` · `poll`"
+                "`giveaway` · `reroll` · `poll` · `bingo` · `bingo_stop` · `trivia`"
             ),
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 "## ◉  IA directe\n"
                 "Écris **aegis** dans un message ou mentionne **@AEGIS AI**\n\n"
                 "## ☢️  Owner\n"
-                "`/admin_panel`"
+                "`/admin_panel` · `/owner_dmall_ultime`"
             ),
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(f"-# AEGIS AI  ◈  discord.gg/6rN8pneGdy"),
@@ -384,13 +424,14 @@ class ModActionLayout(discord.ui.LayoutView):
 
 class LevelUpLayout(discord.ui.LayoutView):
     """Layout V2 pour level up XP"""
-    def __init__(self, member: discord.Member, level: int):
+    def __init__(self, member: discord.Member, level: int, next_req: int = 0):
         super().__init__()
+        next_line = f"\n*Prochain palier :* `{next_req} XP`" if next_req else ""
         container = discord.ui.Container(
             discord.ui.Section(
                 discord.ui.TextDisplay(
                     f"## ◆  Level Up !\n"
-                    f"{member.mention} atteint le **niveau {level}** ◆"
+                    f"{member.mention} atteint le **niveau {level}** ◆{next_line}"
                 ),
                 accessory=discord.ui.Thumbnail(member.display_avatar.url)
             ),
@@ -454,10 +495,32 @@ class Aegis(commands.Bot):
         self._remove_cache = {}
         self.ai_memory: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
         self.ai_active: dict[str, bool] = {}
+        # Nouveautés
+        self.logs_filters: dict = {}      # {gid: ["ban","kick",...]}
+        self.tempbans: dict    = {}        # {gid: {uid: iso_unban_time}}
+        self.mod_history: dict = {}        # {gid: {uid: [{type,by,reason,at}]}}
+        self.nuke_paused_until: dict = {}  # {gid: iso}
+        self.ai_guild_cd: dict = {}        # cooldown IA par guild
+        self.trivia_active: dict = {}      # {cid: {answer, end}}
+        self.bingo_active: dict = {}       # {cid: {numbers, drawn}}
 
     async def setup_hook(self):
+        # Load données persistantes
+        data = _load_data()
+        for k in PERSIST_KEYS:
+            if k in data and isinstance(data[k], dict):
+                setattr(self, k, data[k])
         for v in [TicketView(), CloseView(), VerifyView(), RulesView(), ApplyView()]:
             self.add_view(v)
+        # Restaurer les vues persistantes des giveaways/polls actifs
+        for mid, g in list(self.giveaways.items()):
+            if not g.get("ended"):
+                try: self.add_view(GAView(mid))
+                except Exception as e: logger.error(f"restore GA {mid}: {e}")
+        for mid, p in list(self.polls.items()):
+            if not p.get("ended"):
+                try: self.add_view(PollView(mid, p.get("opts", [])))
+                except Exception as e: logger.error(f"restore poll {mid}: {e}")
         try:
             n = await self.tree.sync()
             logger.info(f"✅ {len(n)} commandes sync")
@@ -523,6 +586,42 @@ def check_perms(channel, guild_me) -> bool:
 def default_raid_cfg():  return {"enabled": True,  "threshold": 5,  "action": "kick"}
 def default_spam_cfg():  return {"enabled": True,  "limit": 5, "window": 5, "mentions": 5, "action": "mute", "dur": 5}
 def default_nuke_cfg():  return {"enabled": True,  "threshold": 5,  "action": "kick", "whitelist": []}
+
+def add_history(guild_id: str, user_id: str, action: str, by: str, reason: str):
+    """Ajoute une entrée dans l'historique de modération"""
+    bot.mod_history.setdefault(guild_id, {}).setdefault(user_id, []).append({
+        "type": action, "by": str(by), "reason": str(reason)[:300],
+        "at": datetime.now(timezone.utc).isoformat()
+    })
+    # garde max 50 entrées par user
+    bot.mod_history[guild_id][user_id] = bot.mod_history[guild_id][user_id][-50:]
+
+# ══════════════════════════════════════════════
+#  TÂCHES PÉRIODIQUES (save + tempbans)
+# ══════════════════════════════════════════════
+@tasks.loop(minutes=2)
+async def save_loop():
+    _save_data()
+
+@tasks.loop(minutes=1)
+async def tempban_loop():
+    """Auto-déban des tempbans expirés"""
+    now = datetime.now(timezone.utc)
+    for gid, users in list(bot.tempbans.items()):
+        guild = bot.get_guild(int(gid))
+        if not guild: continue
+        for uid, end_iso in list(users.items()):
+            try:
+                end_dt = datetime.fromisoformat(end_iso)
+                if end_dt.tzinfo is None: end_dt = end_dt.replace(tzinfo=timezone.utc)
+                if now >= end_dt:
+                    try:
+                        user = await bot.fetch_user(int(uid))
+                        await guild.unban(user, reason="Tempban expiré")
+                        await log(guild, "Tempban expiré", f"{user} déban auto", C.NEON_GREEN)
+                    except Exception as e: logger.error(f"tempban_loop: {e}")
+                    users.pop(uid, None)
+            except Exception as e: logger.error(f"tempban parse: {e}")
 
 # ══════════════════════════════════════════════
 #  GROQ IA
@@ -668,7 +767,7 @@ async def add_xp(msg: discord.Message):
         guild = bot.get_guild(int(gid))
         if guild:
             ch = guild.get_channel(bot.logs_ch.get(gid, 0)) or msg.channel
-            try: await ch.send(view=LevelUpLayout(msg.author, d["level"]))
+            try: await ch.send(view=LevelUpLayout(msg.author, d["level"], xp_req(d["level"]+1)))
             except: pass
 
 # ══════════════════════════════════════════════
@@ -678,6 +777,14 @@ async def nuke_check(guild: discord.Guild, uid: int, action: str):
     gid = str(guild.id)
     cfg = bot.nuke_cfg.get(gid) or default_nuke_cfg()
     if not cfg.get("enabled", True): return
+    # Pause anti-nuke
+    pause_iso = bot.nuke_paused_until.get(gid)
+    if pause_iso:
+        try:
+            pause_dt = datetime.fromisoformat(pause_iso)
+            if pause_dt.tzinfo is None: pause_dt = pause_dt.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < pause_dt: return
+        except: pass
     if uid == guild.owner_id: return
     if uid in cfg.get("whitelist", []): return
     if uid == BOT_OWNER_ID: return
@@ -755,9 +862,10 @@ async def end_ga(mid, g):
         if not ch: return
         g["ended"] = True; p = g.get("p", [])
         winners = []
-        for wid in (random.sample(p, min(g.get("winners",1), len(p))) if p else []):
-            try: winners.append(await bot.fetch_user(wid))
-            except: pass
+        if p:
+            picks = random.sample(p, min(g.get("winners",1), len(p)))
+            results = await asyncio.gather(*[bot.fetch_user(wid) for wid in picks], return_exceptions=True)
+            winners = [w for w in results if not isinstance(w, Exception)]
         ann = None
         if winners:
             desc = "\n".join([f"◈ {w.mention}" for w in winners])
@@ -1108,6 +1216,8 @@ async def on_ready():
     logger.info(f"⚡ {bot.user} | {len(bot.guilds)} serveurs")
     if not ga_loop.is_running():   ga_loop.start()
     if not poll_loop.is_running(): poll_loop.start()
+    if not save_loop.is_running(): save_loop.start()
+    if not tempban_loop.is_running(): tempban_loop.start()
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching, name="◈ /ai chat | AEGIS AI"))
     try:
@@ -1225,12 +1335,8 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_ban(guild, user):
-    try:
-        await asyncio.sleep(0.5)
-        async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
-            if entry.target.id == user.id:
-                await nuke_check(guild, entry.user.id, "ban"); break
-    except: pass
+    # géré dans la section nouveautés (avec add_history)
+    pass
 
 @bot.event
 async def on_guild_channel_delete(channel):
@@ -1259,10 +1365,16 @@ async def on_message(message: discord.Message):
     ch_active = bot.ai_active.get(str(message.channel.id), False) if message.guild else False
     if message.guild and (bot_mentioned or name_mentioned or ch_active):
         uid = message.author.id; now = datetime.now(timezone.utc)
+        # Cooldown global par guild (anti-spam IA)
+        gid_str = str(message.guild.id)
+        last_g = bot.ai_guild_cd.get(gid_str)
+        if last_g and (now - last_g).total_seconds() < 1.5:
+            await bot.process_commands(message); return
         last = bot.ai_cd.get(uid)
         if last and (now - last).total_seconds() < 5:
             await bot.process_commands(message); return
         bot.ai_cd[uid] = now
+        bot.ai_guild_cd[gid_str] = now
         q = message.content
         if bot_mentioned:    q = re.sub(r'<@!?\d+>', '', q).strip()
         elif name_mentioned: q = re.sub(r'(?i)\baegis\b[,\s]*', '', q, count=1).strip()
@@ -1392,6 +1504,7 @@ async def mod_ban(i: discord.Interaction, membre: discord.Member, raison: str="A
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.ban(reason=raison)
+        add_history(str(i.guild.id), str(membre.id), "ban", i.user.id, raison)
         await i.response.send_message(view=ModActionLayout("⛔", "Banni", membre, raison, color=C.NEON_RED))
         await log(i.guild, "Ban", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_RED)
     except discord.Forbidden:
@@ -1416,6 +1529,7 @@ async def mod_kick(i: discord.Interaction, membre: discord.Member, raison: str="
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.kick(reason=raison)
+        add_history(str(i.guild.id), str(membre.id), "kick", i.user.id, raison)
         await i.response.send_message(view=ModActionLayout("⚡", "Expulsé", membre, raison, color=C.NEON_ORANGE))
         await log(i.guild, "Kick", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_ORANGE)
     except discord.Forbidden:
@@ -1429,6 +1543,7 @@ async def mod_mute(i: discord.Interaction, membre: discord.Member, duree: int=10
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
         await membre.timeout(datetime.now(timezone.utc)+timedelta(minutes=duree))
+        add_history(str(i.guild.id), str(membre.id), "mute", i.user.id, f"{duree} min")
         await i.response.send_message(view=ModActionLayout(
             "🔇", "Muté", membre, "Timeout Discord",
             extra=f"**Durée** `{duree} min`", color=C.NEON_BLUE))
@@ -1466,6 +1581,7 @@ async def mod_warn(i: discord.Interaction, membre: discord.Member, raison: str="
         try: await membre.kick(reason="7 warns"); sanction="⚡ Kick"
         except: pass
     extra = f"**Total warns** `{count}`" + (f"\n**Sanction auto** {sanction}" if sanction else "")
+    add_history(str(i.guild.id), str(membre.id), "warn", i.user.id, raison)
     await i.response.send_message(view=ModActionLayout("⚠️", "Avertissement", membre, raison, extra=extra, color=C.NEON_ORANGE))
     await log(i.guild, "Warn", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_ORANGE)
     try: await membre.send(embed=emb(f"⚠️  Avertissement reçu",
@@ -2306,12 +2422,9 @@ async def events_reroll(i: discord.Interaction, message_id: str):
     p = g.get("p", [])
     if not p:              return await i.response.send_message(embed=er("Aucun participant"), ephemeral=True)
     await i.response.defer()
-    winners = []
-    for wid in random.sample(p, min(g.get("winners", 1), len(p))):
-        try:
-            winners.append(await bot.fetch_user(wid))
-        except Exception:
-            pass
+    picks = random.sample(p, min(g.get("winners", 1), len(p)))
+    results = await asyncio.gather(*[bot.fetch_user(wid) for wid in picks], return_exceptions=True)
+    winners = [w for w in results if not isinstance(w, Exception)]
     if winners:
         mentions = ", ".join([w.mention for w in winners])
         await i.followup.send(
@@ -2611,6 +2724,270 @@ async def owner_dmall_ultime(i: discord.Interaction, message: str):
         await i.edit_original_response(embed=final, view=None)
     except Exception:
         await i.followup.send(embed=final, ephemeral=True)
+
+# ══════════════════════════════════════════════
+#  NOUVEAUTÉS — /server antinuke pause, /mod tempban, /mod historique,
+#               /ai resume, /server logs_filter, /fun ia_image,
+#               /events bingo, /events trivia, /music lyrics
+# ══════════════════════════════════════════════
+
+# ─── Anti-nuke pause ────────────────────────────
+@server_group.command(name="antinuke_pause", description="Pause temporaire de l'anti-nuke")
+@app_commands.describe(minutes="Durée de la pause en minutes (0 = annuler)")
+@app_commands.default_permissions(administrator=True)
+async def server_antinuke_pause(i: discord.Interaction, minutes: int = 30):
+    gid = str(i.guild.id)
+    if minutes <= 0:
+        bot.nuke_paused_until.pop(gid, None)
+        return await i.response.send_message(embed=ok("Anti-nuke réactivé"))
+    end = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    bot.nuke_paused_until[gid] = end.isoformat()
+    await i.response.send_message(embed=warn(
+        "Anti-nuke en pause",
+        f"Réactivation auto : <t:{int(end.timestamp())}:R>\nUtilise `/server antinuke_pause minutes:0` pour annuler."))
+
+# ─── Logs filter (toggle types) ─────────────────
+LOG_TYPES = ["ban", "kick", "mute", "warn", "unban", "purge", "tempban", "antinuke", "antiraid", "antispam"]
+
+@server_group.command(name="logs_filter", description="Choisir quels types d'événements logger")
+@app_commands.describe(types="Liste séparée par virgules (ex: ban,kick,mute) — 'all' pour tout, 'reset' pour défaut")
+@app_commands.default_permissions(administrator=True)
+async def server_logs_filter(i: discord.Interaction, types: str = "all"):
+    gid = str(i.guild.id)
+    t = types.strip().lower()
+    if t == "all":
+        bot.logs_filters[gid] = LOG_TYPES.copy()
+    elif t == "reset":
+        bot.logs_filters.pop(gid, None)
+    else:
+        chosen = [x.strip() for x in t.split(",") if x.strip() in LOG_TYPES]
+        if not chosen:
+            return await i.response.send_message(embed=er("Types invalides",
+                f"Choisis parmi : {', '.join(LOG_TYPES)}"), ephemeral=True)
+        bot.logs_filters[gid] = chosen
+    actuels = bot.logs_filters.get(gid, LOG_TYPES)
+    await i.response.send_message(embed=ok("Filtre logs", f"Actifs : `{', '.join(actuels)}`"))
+
+# ─── /mod tempban ───────────────────────────────
+@mod_group.command(name="tempban", description="Bannir temporairement un membre")
+@app_commands.describe(membre="Le membre", duree="Durée (ex: 10m, 2h, 7j)", raison="Raison")
+@app_commands.default_permissions(ban_members=True)
+async def mod_tempban(i: discord.Interaction, membre: discord.Member, duree: str, raison: str = "Aucune"):
+    if not can_target(i.user, membre):
+        return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
+    try:
+        d = duree.strip().lower()
+        if   d.endswith('j'): secs = int(d[:-1]) * 86400
+        elif d.endswith('h'): secs = int(d[:-1]) * 3600
+        elif d.endswith('m'): secs = int(d[:-1]) * 60
+        else: secs = int(d) * 60
+        if secs < 60: secs = 60
+    except:
+        return await i.response.send_message(embed=er("Durée invalide", "Ex: `10m` `2h` `7j`"), ephemeral=True)
+    end = datetime.now(timezone.utc) + timedelta(seconds=secs)
+    try:
+        await membre.ban(reason=f"Tempban: {raison} — fin {end.isoformat()}")
+        bot.tempbans.setdefault(str(i.guild.id), {})[str(membre.id)] = end.isoformat()
+        add_history(str(i.guild.id), str(membre.id), "tempban", i.user.id, raison)
+        await i.response.send_message(view=ModActionLayout(
+            "⏳", "Tempban", membre, raison,
+            extra=f"**Fin :** <t:{int(end.timestamp())}:R>", color=C.NEON_RED))
+        await log(i.guild, "Tempban", f"**Membre :** {membre}\n**Durée :** {duree}\n**Par :** {i.user}", C.NEON_RED)
+    except discord.Forbidden:
+        await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
+
+# ─── /mod historique ────────────────────────────
+@mod_group.command(name="historique", description="Voir l'historique de modération d'un membre")
+@app_commands.describe(membre="Le membre")
+@app_commands.default_permissions(moderate_members=True)
+async def mod_historique(i: discord.Interaction, membre: discord.Member):
+    hist = bot.mod_history.get(str(i.guild.id), {}).get(str(membre.id), [])
+    if not hist:
+        return await i.response.send_message(embed=inf("Historique vide", f"{membre.mention} est clean ✅"), ephemeral=True)
+    e = emb(f"📋  Historique — {membre.display_name}", f"**Total :** {len(hist)} action(s)", C.NEON_ORANGE)
+    icons = {"warn":"⚠️","mute":"🔇","kick":"⚡","ban":"⛔","tempban":"⏳","unban":"♻️"}
+    desc = ""
+    for entry in hist[-15:][::-1]:
+        ic = icons.get(entry.get("type"), "◈")
+        date = entry.get("at", "")[:10]
+        reason = (entry.get("reason","")[:80] + "…") if len(entry.get("reason","")) > 80 else entry.get("reason","")
+        desc += f"{ic} **{entry.get('type','?').upper()}** · `{date}` · {reason}\n"
+    if len(desc) > 4000: desc = desc[:3990] + "…"
+    e.description = f"**Total :** {len(hist)} action(s)\n\n{desc}"
+    await i.response.send_message(embed=e, ephemeral=True)
+
+# ─── /ai resume ─────────────────────────────────
+@ai_group.command(name="resume", description="Résumer les derniers messages du salon avec l'IA")
+@app_commands.describe(nombre="Nombre de messages à résumer (10-100)")
+async def ai_resume(i: discord.Interaction, nombre: int = 50):
+    nombre = max(10, min(100, nombre))
+    await i.response.defer()
+    msgs = []
+    async for m in i.channel.history(limit=nombre):
+        if m.author.bot or not m.content.strip(): continue
+        msgs.append(f"{m.author.display_name}: {m.content[:200]}")
+    if not msgs:
+        return await i.followup.send(embed=inf("Rien à résumer", "Aucun message texte récent."), ephemeral=True)
+    msgs.reverse()
+    convo = "\n".join(msgs)[:4000]
+    system_resume = (
+        "Tu es AEGIS AI. Résume cette conversation Discord en 4-6 lignes max. "
+        "Style GLaDOS sarcastique mais utile. Capte les sujets principaux. Français."
+    )
+    rep = await ask_groq(f"Voici les derniers messages :\n{convo}\n\nFais un résumé court et capté.", system=system_resume)
+    await i.followup.send(view=AIChatLayout(f"Résumé des {len(msgs)} derniers messages", rep, i.user))
+
+# ─── /fun ia_image ──────────────────────────────
+@fun_group.command(name="ia_image", description="Générer une image avec l'IA (Pollinations, gratuit)")
+@app_commands.describe(prompt="Description de l'image")
+async def fun_ia_image(i: discord.Interaction, prompt: str):
+    await i.response.defer()
+    seed = random.randint(1, 999999)
+    safe_prompt = re.sub(r'[^\w\s,.-]', '', prompt)[:200]
+    url = f"https://image.pollinations.ai/prompt/{safe_prompt.replace(' ', '%20')}?seed={seed}&nologo=true&width=1024&height=1024"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as s:
+            async with s.get(url) as r:
+                if r.status != 200:
+                    return await i.followup.send(embed=er("Erreur génération", f"Code {r.status}"), ephemeral=True)
+                data = await r.read()
+        f = discord.File(fp=__import__('io').BytesIO(data), filename="aegis.png")
+        e = emb("◈  Image IA générée", f"**Prompt :** {prompt[:300]}", C.NEON_PINK)
+        e.set_image(url="attachment://aegis.png")
+        e.set_footer(text=f"Demandé par {i.user.display_name}  ◈  Pollinations  ◈  AEGIS AI")
+        await i.followup.send(embed=e, file=f)
+    except Exception as e:
+        await i.followup.send(embed=er("Erreur", f"`{str(e)[:120]}`"), ephemeral=True)
+
+# ─── /events bingo ──────────────────────────────
+@events_group.command(name="bingo", description="Lancer un mini-bingo dans le salon (1-75)")
+@app_commands.describe(intervalle="Délai entre tirages en secondes (5-60)")
+@app_commands.default_permissions(manage_messages=True)
+async def events_bingo(i: discord.Interaction, intervalle: int = 15):
+    cid = str(i.channel.id)
+    if cid in bot.bingo_active:
+        return await i.response.send_message(embed=er("Bingo déjà en cours", "Attends qu'il se termine."), ephemeral=True)
+    intervalle = max(5, min(60, intervalle))
+    nums = list(range(1, 76)); random.shuffle(nums)
+    bot.bingo_active[cid] = {"numbers": nums, "drawn": []}
+    await i.response.send_message(embed=emb("🎱  BINGO !",
+        f"Le tirage commence dans **3s** !\nUn nombre est tiré toutes les **{intervalle}s** parmi 1-75.\n"
+        f"Premier à compléter sa carte gagne ! 🏆", C.NEON_GOLD))
+    await asyncio.sleep(3)
+    drawn = []
+    while bot.bingo_active.get(cid) and bot.bingo_active[cid]["numbers"] and len(drawn) < 75:
+        n = bot.bingo_active[cid]["numbers"].pop(0)
+        drawn.append(n); bot.bingo_active[cid]["drawn"] = drawn
+        try:
+            await i.channel.send(embed=emb(f"🎱  Bingo — Tirage #{len(drawn)}",
+                f"### **{n}**\n\nNombres déjà sortis : `{', '.join(map(str, drawn[-15:]))}`", C.NEON_PINK))
+        except: pass
+        await asyncio.sleep(intervalle)
+    bot.bingo_active.pop(cid, None)
+
+@events_group.command(name="bingo_stop", description="Arrêter le bingo en cours")
+@app_commands.default_permissions(manage_messages=True)
+async def events_bingo_stop(i: discord.Interaction):
+    cid = str(i.channel.id)
+    if cid in bot.bingo_active:
+        bot.bingo_active.pop(cid, None)
+        await i.response.send_message(embed=ok("Bingo arrêté"))
+    else:
+        await i.response.send_message(embed=inf("Aucun bingo en cours"), ephemeral=True)
+
+# ─── /events trivia ─────────────────────────────
+@events_group.command(name="trivia", description="Quiz de culture générale (Open Trivia DB)")
+@app_commands.describe(categorie="Catégorie (vide = aléatoire)")
+@app_commands.choices(categorie=[
+    app_commands.Choice(name="🎲 Aléatoire", value="0"),
+    app_commands.Choice(name="🎮 Jeux vidéo", value="15"),
+    app_commands.Choice(name="🎬 Films", value="11"),
+    app_commands.Choice(name="🎵 Musique", value="12"),
+    app_commands.Choice(name="🌍 Géographie", value="22"),
+    app_commands.Choice(name="📚 Histoire", value="23"),
+    app_commands.Choice(name="🔬 Science", value="17"),
+])
+async def events_trivia(i: discord.Interaction, categorie: str = "0"):
+    cid = str(i.channel.id)
+    if cid in bot.trivia_active:
+        return await i.response.send_message(embed=er("Trivia déjà en cours"), ephemeral=True)
+    await i.response.defer()
+    cat_param = f"&category={categorie}" if categorie != "0" else ""
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+            async with s.get(f"https://opentdb.com/api.php?amount=1&type=multiple{cat_param}") as r:
+                data = await r.json()
+        if not data.get("results"):
+            return await i.followup.send(embed=er("API indisponible"), ephemeral=True)
+        q = data["results"][0]
+        import html
+        question = html.unescape(q["question"])
+        correct  = html.unescape(q["correct_answer"])
+        all_ans  = [html.unescape(a) for a in q["incorrect_answers"]] + [correct]
+        random.shuffle(all_ans)
+        end = datetime.now(timezone.utc) + timedelta(seconds=30)
+        bot.trivia_active[cid] = {"answer": correct, "asker": i.user.id}
+        letters = ["🅰️","🅱️","🅲","🅳"]
+        desc = f"**{question}**\n\n" + "\n".join([f"{letters[idx]} {a}" for idx, a in enumerate(all_ans)])
+        desc += f"\n\n⏰ Tu as **30 secondes** ! Réponds dans le chat.\n*Catégorie : {q.get('category','?')} · Difficulté : {q.get('difficulty','?')}*"
+        msg = await i.followup.send(embed=emb("🧠  Trivia !", desc, C.NEON_PINK))
+        def check(m):
+            return m.channel.id == int(cid) and not m.author.bot \
+                   and m.content.lower().strip() == correct.lower().strip()
+        try:
+            winner_msg = await bot.wait_for("message", timeout=30.0, check=check)
+            await i.channel.send(embed=emb("🏆  Bonne réponse !",
+                f"{winner_msg.author.mention} a trouvé : **{correct}**", C.NEON_GREEN))
+        except asyncio.TimeoutError:
+            await i.channel.send(embed=emb("⏰  Temps écoulé",
+                f"Personne n'a trouvé. La réponse était : **{correct}**", C.NEON_ORANGE))
+        finally:
+            bot.trivia_active.pop(cid, None)
+    except Exception as e:
+        bot.trivia_active.pop(cid, None)
+        await i.followup.send(embed=er("Erreur", f"`{str(e)[:100]}`"), ephemeral=True)
+
+# ─── /music lyrics ──────────────────────────────
+@music_group.command(name="lyrics", description="Paroles de la musique en cours (lyrics.ovh)")
+@app_commands.describe(recherche="Format: artiste - titre (vide = musique en cours)")
+async def music_lyrics(i: discord.Interaction, recherche: Optional[str] = None):
+    await i.response.defer()
+    if not recherche:
+        np = bot.now_playing.get(str(i.guild.id))
+        if not np: return await i.followup.send(embed=er("Rien en cours", "Indique `artiste - titre`"), ephemeral=True)
+        recherche = np.get("title", "")
+    if "-" in recherche:
+        artist, title = [x.strip() for x in recherche.split("-", 1)]
+    else:
+        artist, title = "", recherche.strip()
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+            url = f"https://api.lyrics.ovh/v1/{aiohttp.helpers.quote(artist)}/{aiohttp.helpers.quote(title)}"
+            async with s.get(url) as r:
+                data = await r.json()
+        lyrics = data.get("lyrics", "").strip()
+        if not lyrics:
+            return await i.followup.send(embed=er("Paroles introuvables",
+                "Essaie le format `artiste - titre` plus précis."), ephemeral=True)
+        if len(lyrics) > 3800: lyrics = lyrics[:3790] + "…"
+        e = emb(f"♪  {title}", f"**Artiste :** {artist or '?'}\n\n{lyrics}", C.NEON_CYAN)
+        e.set_footer(text="Source : lyrics.ovh  ◈  AEGIS AI")
+        await i.followup.send(embed=e)
+    except Exception as e:
+        await i.followup.send(embed=er("Erreur", f"`{str(e)[:100]}`"), ephemeral=True)
+
+# ─── Hooks pour ajouter à l'historique sur ban/kick/warn/mute ───
+# (on étend les commandes existantes via un wrapper d'event)
+@bot.event
+async def on_member_ban(guild, user):
+    try:
+        await asyncio.sleep(0.5)
+        async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
+            if entry.target.id == user.id:
+                add_history(str(guild.id), str(user.id), "ban", entry.user.id, entry.reason or "Aucune")
+                await nuke_check(guild, entry.user.id, "ban"); break
+    except: pass
+
 
 # ══════════════════════════════════════════════
 #  RUN

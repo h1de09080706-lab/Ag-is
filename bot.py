@@ -682,30 +682,117 @@ async def ask_groq(q: str, channel_id: str = None, system: str = None) -> str:
 # ══════════════════════════════════════════════
 FF = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
+# Chemin optionnel vers un fichier cookies YouTube exporté
+# (sur Railway : variable d'env YT_COOKIES_PATH=/data/cookies.txt
+#  + monter le fichier sur le volume /data)
+YT_COOKIES_PATH = os.environ.get('YT_COOKIES_PATH', '')
+
+# Player clients à essayer dans l'ordre (2026 : YouTube bloque souvent
+# certains clients depuis les IPs datacenter type Railway/Heroku)
+_YT_CLIENTS = [
+    ['tv_embedded'],      # le plus fiable depuis fin 2024
+    ['ios'],              # bon fallback
+    ['mweb'],             # mobile web
+    ['web_safari'],
+    ['android_vr'],
+]
+
+def _ydl_opts(client_list):
+    opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'ytsearch1',
+        'source_address': '0.0.0.0',
+        'extractor_retries': 3,
+        'age_limit': 99,
+        'geo_bypass': True,
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': client_list,
+                'player_skip': ['configs'],
+            }
+        },
+    }
+    if YT_COOKIES_PATH and os.path.isfile(YT_COOKIES_PATH):
+        opts['cookiefile'] = YT_COOKIES_PATH
+    return opts
+
+
 async def fetch_track(query: str):
+    """Cherche et résout une piste audio. Essaie plusieurs clients YouTube
+    puis retombe sur SoundCloud si tout YouTube est bloqué (Railway)."""
     try:
         import yt_dlp
-        opts = {
-            'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True,
-            'no_warnings': True, 'default_search': 'ytsearch1',
-            'source_address': '0.0.0.0', 'extractor_retries': 5,
-            'age_limit': 99, 'geo_bypass': True, 'skip_download': True,
-            'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-            'extractor_args': {'youtube': {'player_client': ['android', 'web'], 'player_skip': ['configs']}},
-        }
-        def _get():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(
-                    query if query.startswith('http') else f"ytsearch1:{query}", download=False)
-                if info and 'entries' in info:
-                    info = info['entries'][0] if info['entries'] else None
-                if not info: return None
-                return {'title':info.get('title','?'), 'url':info.get('url'),
-                        'webpage':info.get('webpage_url',''), 'duration':info.get('duration',0),
-                        'thumb':info.get('thumbnail',''), 'src':info.get('webpage_url') or query}
-        return await asyncio.get_event_loop().run_in_executor(None, _get)
     except Exception as e:
-        logger.error(f"yt-dlp: {e}"); return None
+        logger.error(f"yt-dlp import: {e}")
+        return None
+
+    is_url = query.startswith('http')
+    last_err = None
+
+    def _try(opts, q):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(q, download=False)
+            if info and 'entries' in info:
+                info = info['entries'][0] if info['entries'] else None
+            if not info or not info.get('url'):
+                return None
+            return {
+                'title':    info.get('title', '?'),
+                'url':      info.get('url'),
+                'webpage':  info.get('webpage_url', ''),
+                'duration': info.get('duration', 0),
+                'thumb':    info.get('thumbnail', ''),
+                'src':      info.get('webpage_url') or query,
+            }
+
+    loop = asyncio.get_event_loop()
+
+    # 1) Essais successifs sur YouTube avec différents clients
+    for clients in _YT_CLIENTS:
+        try:
+            opts = _ydl_opts(clients)
+            q = query if is_url else f"ytsearch1:{query}"
+            result = await loop.run_in_executor(None, lambda: _try(opts, q))
+            if result and result.get('url'):
+                logger.info(f"yt-dlp ok via {clients[0]}: {result['title'][:60]}")
+                return result
+        except Exception as e:
+            last_err = e
+            logger.warning(f"yt-dlp {clients[0]} fail: {str(e)[:120]}")
+            continue
+
+    # 2) Fallback SoundCloud (souvent OK même quand YouTube bloque Railway)
+    if not is_url:
+        try:
+            opts = {
+                'format': 'bestaudio/best', 'noplaylist': True,
+                'quiet': True, 'no_warnings': True,
+                'default_search': 'scsearch1', 'skip_download': True,
+                'source_address': '0.0.0.0',
+            }
+            result = await loop.run_in_executor(
+                None, lambda: _try(opts, f"scsearch1:{query}"))
+            if result and result.get('url'):
+                logger.info(f"SoundCloud fallback ok: {result['title'][:60]}")
+                return result
+        except Exception as e:
+            last_err = e
+            logger.warning(f"soundcloud fail: {str(e)[:120]}")
+
+    logger.error(f"fetch_track: tous les extracteurs ont échoué. "
+                 f"Dernière erreur: {str(last_err)[:200]}")
+    return None
 
 async def next_track(gid: str):
     vc = bot.vc_pool.get(gid); q = bot.queues.get(gid, [])

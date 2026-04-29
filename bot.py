@@ -34,20 +34,28 @@ BOT_OWNER_ID = int(os.environ.get('BOT_OWNER_ID', '0'))
 #  THÈME NÉON
 # ══════════════════════════════════════════════
 class C:
-    NEON_CYAN   = 0x00FFFF
-    NEON_PINK   = 0xFF00FF
-    NEON_GREEN  = 0x00FF41
-    NEON_ORANGE = 0xFF6600
-    NEON_RED    = 0xFF0040
-    NEON_BLUE   = 0x0080FF
-    NEON_GOLD   = 0xFFD700
+    # Palette signature Aegis (rose néon sur bleu royal)
+    AEGIS_PINK    = 0xE57BFF   # Rose néon (logo)
+    AEGIS_MAGENTA = 0xFF4FD8   # Magenta vif
+    AEGIS_BLUE    = 0x2B3FD9   # Bleu royal (fond logo)
+    AEGIS_INDIGO  = 0x3949E0   # Indigo clair
+    AEGIS_WHITE   = 0xF5E6FF   # Blanc rosé
+
+    # Alias conservés pour compatibilité (rebrandés)
+    NEON_PINK   = AEGIS_PINK
+    NEON_CYAN   = AEGIS_MAGENTA   # accent principal = rose Aegis
+    NEON_BLUE   = AEGIS_BLUE
+    NEON_GOLD   = AEGIS_PINK      # highlights "gold" → rose
+    NEON_GREEN  = 0x7CFFB0
+    NEON_ORANGE = 0xFF9F6B
+    NEON_RED    = 0xFF3D7F
     DARK        = 0x0D0D0D
     OK    = NEON_GREEN
     ERR   = NEON_RED
-    INFO  = NEON_CYAN
+    INFO  = AEGIS_PINK
     WARN  = NEON_ORANGE
-    MOD   = NEON_PINK
-    SYS   = NEON_BLUE
+    MOD   = AEGIS_MAGENTA
+    SYS   = AEGIS_BLUE
 
 LINE = "─────────────────────"
 
@@ -401,7 +409,7 @@ class AvatarLayout(discord.ui.LayoutView):
         container = discord.ui.Container(
             discord.ui.TextDisplay(f"## ◈  Avatar de {member.display_name}"),
             discord.ui.MediaGallery(
-                discord.ui.MediaGalleryItem(
+                discord.MediaGalleryItem(
                     media=member.display_avatar.with_size(1024).url,
                     description=f"Avatar de {member.display_name}"
                 )

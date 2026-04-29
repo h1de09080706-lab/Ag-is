@@ -212,16 +212,13 @@ class AideLayout(discord.ui.LayoutView):
                 "Il répond, relance les discussions et rend ton serveur actif."
             ),
             discord.ui.Separator(),
-            discord.ui.Section(
-                discord.ui.TextDisplay(
-                    "## ◉  /ai\n"
-                    "`chat` · `relance` · `mode` · `memory` · `question`\n\n"
-                    "## ⛔  /mod\n"
-                    "`ban` · `unban` · `kick` · `mute` · `unmute` · `warn` · `unwarn` · `warns` · `purge` · `rename` · `lock` · `unlock` · `slowmode`\n\n"
-                    "## ♪  /music\n"
-                    "`play` · `pause` · `resume` · `skip` · `stop` · `queue` · `nowplaying` · `volume`"
-                ),
-                accessory=discord.ui.Thumbnail("https://cdn.discordapp.com/emojis/1234567890.png")
+            discord.ui.TextDisplay(
+                "## ◉  /ai\n"
+                "`chat` · `relance` · `mode` · `memory` · `question`\n\n"
+                "## ⛔  /mod\n"
+                "`ban` · `unban` · `kick` · `mute` · `unmute` · `warn` · `unwarn` · `warns` · `purge` · `rename` · `lock` · `unlock` · `slowmode`\n\n"
+                "## ♪  /music\n"
+                "`play` · `pause` · `resume` · `skip` · `stop` · `queue` · `nowplaying` · `volume`"
             ),
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
@@ -728,13 +725,15 @@ class GABtn(discord.ui.Button):
         if uid in p: p.remove(uid); msg = "❌ Retiré."
         else: p.append(uid); msg = f"✅ Tu participes ! ({len(p)})"
         try:
-            em = i.message.embeds[0]
-            for idx, f in enumerate(em.fields):
-                if "Participants" in f.name:
-                    em.set_field_at(idx, name="◎ Participants", value=f"**{len(p)}**", inline=True)
-                    break
-            await i.message.edit(embed=em)
-        except: pass
+            if i.message.embeds:
+                em = i.message.embeds[0]
+                for idx, f in enumerate(em.fields):
+                    if "Participants" in f.name:
+                        em.set_field_at(idx, name="◎ Participants", value=f"**{len(p)}**", inline=True)
+                        break
+                await i.message.edit(embed=em)
+        except Exception as ex:
+            logger.error(f"GAView edit: {ex}")
         await i.response.send_message(msg, ephemeral=True)
 
 @tasks.loop(minutes=1)
@@ -759,6 +758,7 @@ async def end_ga(mid, g):
         for wid in (random.sample(p, min(g.get("winners",1), len(p))) if p else []):
             try: winners.append(await bot.fetch_user(wid))
             except: pass
+        ann = None
         if winners:
             desc = "\n".join([f"◈ {w.mention}" for w in winners])
             e = emb(f"🎉  Giveaway Terminé", f"**{g['title']}**\n**Prix :** {g['prize']}\n\n{desc}", C.NEON_GOLD)
@@ -770,8 +770,11 @@ async def end_ga(mid, g):
         try:
             msg = await ch.fetch_message(int(mid)); await msg.edit(embed=e, view=None)
         except: pass
-        if winners:
-            await ch.send(content="@everyone 🎉", embed=ann, allowed_mentions=discord.AllowedMentions(everyone=True))
+        if winners and ann is not None:
+            try:
+                await ch.send(content="@everyone 🎉", embed=ann, allowed_mentions=discord.AllowedMentions(everyone=True))
+            except Exception as e2:
+                logger.error(f"end_ga announce: {e2}")
     except Exception as e: logger.error(f"end_ga: {e}")
 
 # ══════════════════════════════════════════════
@@ -807,15 +810,17 @@ async def _poll_update(msg, poll):
             v = int(v)
             if 0 <= v < len(c): c[v] += 1
         except: pass
-    tot = sum(c); desc = f"**{poll['q']}**\n\n"
+    tot = sum(c); desc = f"**{poll['q'][:300]}**\n\n"
     for idx, o in enumerate(opts):
         pct = int(c[idx]/tot*100) if tot > 0 else 0
         bar = "█"*(pct//10) + "░"*(10-pct//10)
-        desc += f"{PE[idx]} **{o}**\n`{bar}` {c[idx]} vote{'s' if c[idx]!=1 else ''} ({pct}%)\n\n"
+        o_safe = (o[:200] + "…") if len(o) > 200 else o
+        desc += f"{PE[idx]} **{o_safe}**\n`{bar}` {c[idx]} vote{'s' if c[idx]!=1 else ''} ({pct}%)\n\n"
     desc += f"▸ **{tot} vote{'s' if tot!=1 else ''} au total**"
     if poll.get("end"):
         end = datetime.fromisoformat(poll["end"])
         desc += f"\n\n⏰ Fin : <t:{int(end.timestamp())}:R>"
+    if len(desc) > 4000: desc = desc[:3990] + "…"
     await msg.edit(embed=emb(f"▸  Sondage", desc, C.NEON_CYAN))
 
 async def _poll_results(poll):
@@ -827,15 +832,20 @@ async def _poll_results(poll):
         except: pass
     tot = sum(c); mx = max(c) if c else 0
     win = [opts[idx] for idx, x in enumerate(c) if x == mx and mx > 0]
-    desc = f"**{poll['q']}**\n\n"
+    desc = f"**{poll['q'][:300]}**\n\n"
     for idx, o in enumerate(opts):
         pct = int(c[idx]/tot*100) if tot > 0 else 0
         bar = "█"*(pct//10) + "░"*(10-pct//10)
         crown = " 👑" if o in win else ""
-        desc += f"{PE[idx]} **{o}**{crown}\n`{bar}` {c[idx]} vote{'s' if c[idx]!=1 else ''} ({pct}%)\n\n"
+        o_safe = (o[:200] + "…") if len(o) > 200 else o
+        desc += f"{PE[idx]} **{o_safe}**{crown}\n`{bar}` {c[idx]} vote{'s' if c[idx]!=1 else ''} ({pct}%)\n\n"
     desc += f"▸ **{tot} vote{'s' if tot!=1 else ''} au total**"
+    if len(desc) > 4000: desc = desc[:3990] + "…"
     e = emb(f"▸  Résultats du sondage", desc, C.NEON_GOLD)
-    if win and mx > 0: e.add_field(name="🏆 Gagnant(s)", value=" / ".join(win))
+    if win and mx > 0:
+        win_value = " / ".join(win)
+        if len(win_value) > 1024: win_value = win_value[:1020] + "…"
+        e.add_field(name="🏆 Gagnant(s)", value=win_value)
     return e
 
 @tasks.loop(seconds=30)
@@ -964,10 +974,12 @@ class ApplyModal(discord.ui.Modal, title="📝 Candidature"):
     motiv  = discord.ui.TextInput(label="Motivation", style=discord.TextStyle.paragraph, max_length=500)
     async def on_submit(self, i: discord.Interaction):
         e = emb("✨  Candidature", color=C.NEON_PINK)
-        e.add_field(name="Pseudo", value=self.pseudo.value, inline=True)
-        e.add_field(name="Âge",    value=self.age.value,    inline=True)
+        e.add_field(name="Pseudo", value=self.pseudo.value[:1024], inline=True)
+        e.add_field(name="Âge",    value=self.age.value[:1024],    inline=True)
         e.add_field(name="Discord",value=i.user.mention,    inline=True)
-        e.add_field(name="Motivation", value=self.motiv.value, inline=False)
+        motiv = self.motiv.value
+        if len(motiv) > 1024: motiv = motiv[:1020] + "…"
+        e.add_field(name="Motivation", value=motiv, inline=False)
         e.set_thumbnail(url=i.user.display_avatar.url)
         ch = discord.utils.get(i.guild.text_channels, name="candidatures")
         if ch: await ch.send(embed=e)
@@ -1427,8 +1439,11 @@ async def mod_mute(i: discord.Interaction, membre: discord.Member, duree: int=10
 @app_commands.describe(membre="Le membre")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_unmute(i: discord.Interaction, membre: discord.Member):
-    await membre.timeout(None)
-    await i.response.send_message(embed=ok("Unmute", f"{membre.mention}"))
+    try:
+        await membre.timeout(None)
+        await i.response.send_message(embed=ok("Unmute", f"{membre.mention}"))
+    except discord.Forbidden:
+        await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
 
 @mod_group.command(name="warn", description="Avertir un membre")
 @app_commands.describe(membre="Le membre", raison="Raison")
@@ -1478,13 +1493,16 @@ async def mod_warns(i: discord.Interaction, membre: Optional[discord.Member]=Non
         return await i.response.send_message(embed=inf("Aucun warn", f"{m.mention} est clean ✅"), ephemeral=True)
     e = emb(f"⚠️  Warns de {m.display_name}", f"**Total :** {len(lst)}", C.NEON_ORANGE)
     for idx, w in enumerate(lst[-10:], 1):
-        e.add_field(name=f"#{idx}", value=f"**Raison :** {w['r']}\n**Date :** {w['at'][:10]}", inline=True)
+        raison = (w['r'][:200] + "…") if len(w['r']) > 200 else w['r']
+        e.add_field(name=f"#{idx}", value=f"**Raison :** {raison}\n**Date :** {w['at'][:10]}", inline=True)
     await i.response.send_message(embed=e)
 
 @mod_group.command(name="purge", description="Supprimer des messages")
 @app_commands.describe(nombre="Nombre de messages (max 100)")
 @app_commands.default_permissions(manage_messages=True)
 async def mod_purge(i: discord.Interaction, nombre: int):
+    if nombre <= 0:
+        return await i.response.send_message(embed=er("Nombre invalide", "Indique un nombre entre 1 et 100."), ephemeral=True)
     await i.response.defer(ephemeral=True)
     deleted = await i.channel.purge(limit=min(nombre, 100))
     await i.followup.send(embed=ok("Purge", f"**{len(deleted)}** messages supprimés."))
@@ -2150,7 +2168,8 @@ async def server_suggestion(i: discord.Interaction, texte: str, salon: Optional[
             if salon: break
     if not salon:
         return await i.response.send_message(embed=er("Salon introuvable"), ephemeral=True)
-    e = emb("💡  Suggestion", texte, C.NEON_GOLD)
+    texte_safe = (texte[:3500] + "…") if len(texte) > 3500 else texte
+    e = emb("💡  Suggestion", texte_safe, C.NEON_GOLD)
     e.add_field(name="Par", value=i.user.mention, inline=True)
     e.add_field(name="Statut", value="⏳ En attente", inline=True)
     e.set_thumbnail(url=i.user.display_avatar.url)
@@ -2261,8 +2280,10 @@ async def events_giveaway(i: discord.Interaction, titre: str, prix: str, duree: 
         return await i.response.send_message(embed=er("Durée invalide","Exemples : `10m` `2h` `1j`"), ephemeral=True)
     await i.response.defer()
     end = datetime.now(timezone.utc) + timedelta(seconds=total_s)
-    e = discord.Embed(title=f"🎉  {titre.upper()}",
-                      description=f"◎ **Prix :** {prix}\n─────────────────────",
+    titre_safe = (titre[:200] + "…") if len(titre) > 200 else titre
+    prix_safe  = (prix[:200] + "…") if len(prix) > 200 else prix
+    e = discord.Embed(title=f"🎉  {titre_safe.upper()}",
+                      description=f"◎ **Prix :** {prix_safe}\n─────────────────────",
                       color=C.NEON_GOLD, timestamp=datetime.now(timezone.utc))
     e.add_field(name="◈ Gagnants",    value=f"**{gagnants}**",               inline=True)
     e.add_field(name="◎ Participants", value=f"**0**",                        inline=True)
@@ -2270,7 +2291,7 @@ async def events_giveaway(i: discord.Interaction, titre: str, prix: str, duree: 
     e.set_footer(text=f"Organisé par {i.user.display_name}  ◈  AEGIS AI")
     msg = await i.channel.send(embed=e)
     mid = str(msg.id)
-    bot.giveaways[mid] = {"title":titre,"prize":prix,"winners":gagnants,"end":end.isoformat(),
+    bot.giveaways[mid] = {"title":titre_safe,"prize":prix_safe,"winners":gagnants,"end":end.isoformat(),
                           "cid":str(i.channel.id),"gid":str(i.guild.id),"p":[],"ended":False}
     v = GAView(mid); bot.add_view(v); await msg.edit(view=v)
     await i.followup.send(embed=ok("Giveaway créé !"), ephemeral=True)
@@ -2284,17 +2305,21 @@ async def events_reroll(i: discord.Interaction, message_id: str):
     if not g.get("ended"): return await i.response.send_message(embed=er("Encore en cours"), ephemeral=True)
     p = g.get("p", [])
     if not p:              return await i.response.send_message(embed=er("Aucun participant"), ephemeral=True)
+    await i.response.defer()
     winners = []
-    for wid in random.sample(p, min(g.get("winners",1), len(p))):
-        try: winners.append(await bot.fetch_user(wid))
-        except: pass
+    for wid in random.sample(p, min(g.get("winners", 1), len(p))):
+        try:
+            winners.append(await bot.fetch_user(wid))
+        except Exception:
+            pass
     if winners:
-        await i.response.send_message(
+        mentions = ", ".join([w.mention for w in winners])
+        await i.followup.send(
             content=" ".join([w.mention for w in winners]),
             embed=emb("🎉  Reroll !",
-                f"**Gagnant(s) :** {', '.join([w.mention for w in winners])}\n**Prix :** {g.get('prize')}", C.NEON_GOLD))
+                f"**Gagnant(s) :** {mentions}\n**Prix :** {g.get('prize')}", C.NEON_GOLD))
     else:
-        await i.response.send_message(embed=er("Erreur reroll"), ephemeral=True)
+        await i.followup.send(embed=er("Erreur reroll", "Impossible de récupérer les gagnants."), ephemeral=True)
 
 @events_group.command(name="poll", description="Créer un sondage interactif")
 @app_commands.describe(question="La question", option1="Option 1", option2="Option 2",
@@ -2307,11 +2332,13 @@ async def events_poll(i: discord.Interaction, question: str, option1: str, optio
     opts = [o for o in [option1,option2,option3,option4,option5] if o]
     end  = None
     if duree > 0: end = datetime.now(timezone.utc) + timedelta(minutes=duree)
-    desc = f"**{question}**\n\n"
+    desc = f"**{question[:300]}**\n\n"
     for idx, o in enumerate(opts):
-        desc += f"{PE[idx]} **{o}**\n`░░░░░░░░░░` 0 vote (0%)\n\n"
+        o_safe = (o[:200] + "…") if len(o) > 200 else o
+        desc += f"{PE[idx]} **{o_safe}**\n`░░░░░░░░░░` 0 vote (0%)\n\n"
     desc += f"▸ **0 vote au total**"
     if end: desc += f"\n\n⏰ Fin : <t:{int(end.timestamp())}:R>"
+    if len(desc) > 4000: desc = desc[:3990] + "…"
     e = emb(f"▸  Sondage", desc, C.NEON_CYAN)
     e.set_footer(text=f"Par {i.user.display_name}" + (f" ◈ {duree} min" if duree > 0 else "") + "  ◈  AEGIS AI")
     await i.response.send_message(embed=e)
@@ -2345,7 +2372,7 @@ class AdminPanelView(discord.ui.View):
         self.guilds = guilds
         self.stats = stats
         self.page = 0
-        self.per_page = 15
+        self.per_page = 10
 
     @property
     def total_pages(self) -> int:
@@ -2381,16 +2408,34 @@ class AdminPanelView(discord.ui.View):
         start = self.page * self.per_page
         end = min(start + self.per_page, g_count)
         lines = []
+        total_len = 0
+        truncated = 0
         for idx, g in enumerate(self.guilds[start:end], start=start+1):
-            lines.append(f"`{idx:>3}.` **{g.name}** — `{g.member_count or 0}` membres  `ID: {g.id}`")
+            # Tronque le nom du serveur pour éviter les lignes trop longues
+            gname = (g.name[:40] + "…") if len(g.name) > 40 else g.name
+            line = f"`{idx:>3}.` **{gname}** — `{g.member_count or 0}` mbr  `{g.id}`"
+            # Discord embed field limit = 1024 chars (on garde 60 de marge)
+            if total_len + len(line) + 1 > 960:
+                truncated = (end - start) - len(lines)
+                break
+            lines.append(line)
+            total_len += len(line) + 1
+        value = "\n".join(lines) if lines else "*Aucun serveur*"
+        if truncated > 0:
+            value += f"\n*… +{truncated} autre(s) — page suivante*"
+        if len(value) > 1024:
+            value = value[:1020] + "…"
         e.add_field(
             name=f"📋  Serveurs ({g_count})",
-            value="\n".join(lines) if lines else "*Aucun serveur*",
+            value=value,
             inline=False)
         invite = f"https://discord.com/oauth2/authorize?client_id={bot.application_id}&permissions=8&integration_type=0&scope=bot"
+        liens_value = f"[Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})"
+        if len(liens_value) > 1024:
+            liens_value = liens_value[:1020] + "…"
         e.add_field(
             name="🔗  Liens",
-            value=f"[Dev Portal](https://discord.com/developers/applications) • [Support](https://discord.gg/6rN8pneGdy) • [Inviter]({invite})",
+            value=liens_value,
             inline=False)
         return e
 

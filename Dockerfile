@@ -16,7 +16,4 @@ RUN pip install --no-cache-dir -U "yt-dlp>=2025.10.26"
 
 COPY bot.py .
 
-# Volume pour les données persistantes (Railway → mount sur /data)
-VOLUME ["/data"]
-
 CMD ["python", "-u", "bot.py"]

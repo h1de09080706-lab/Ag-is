@@ -1200,26 +1200,45 @@ class SuggView(discord.ui.View):
         await i.response.send_message("Refusée.", ephemeral=True)
 
 class RoleMenu(discord.ui.Select):
-    def __init__(self, roles):
+    def __init__(self, roles, guild_id: int):
+        self.guild_id = guild_id
+        # IDs valides uniquement pour ce serveur
+        self.valid_role_ids = {r.id for r in roles}
         opts = [discord.SelectOption(label=r.name, value=str(r.id), emoji="📝") for r in roles[:25]]
+        # custom_id unique par serveur pour éviter les collisions cross-serveur
         super().__init__(placeholder="Choisis tes rôles...", min_values=0,
-                         max_values=len(opts), options=opts, custom_id="rolemenu")
+                         max_values=len(opts), options=opts,
+                         custom_id=f"rolemenu_{guild_id}")
     async def callback(self, i: discord.Interaction):
-        sel = [int(v) for v in self.values]; added = []; removed = []
+        # Vérification critique : s'assurer que l'interaction vient bien du bon serveur
+        if not i.guild or i.guild.id != self.guild_id:
+            return await i.response.send_message("❌ Erreur de serveur.", ephemeral=True)
+        sel = [int(v) for v in self.values]
+        # Vérification que les rôles sélectionnés appartiennent à ce serveur
+        sel = [rid for rid in sel if rid in self.valid_role_ids]
+        added = []; removed = []
         for o in self.options:
-            r = i.guild.get_role(int(o.value))
+            rid = int(o.value)
+            # Double vérification : le rôle doit être dans la whitelist du menu
+            if rid not in self.valid_role_ids:
+                continue
+            r = i.guild.get_role(rid)
             if r:
-                if int(o.value) in sel and r not in i.user.roles:
-                    await i.user.add_roles(r); added.append(r.name)
-                elif int(o.value) not in sel and r in i.user.roles:
-                    await i.user.remove_roles(r); removed.append(r.name)
+                if rid in sel and r not in i.user.roles:
+                    try: await i.user.add_roles(r); added.append(r.name)
+                    except discord.Forbidden: pass
+                elif rid not in sel and r in i.user.roles:
+                    try: await i.user.remove_roles(r); removed.append(r.name)
+                    except discord.Forbidden: pass
         parts = []
         if added:   parts.append(f"✅ Ajouté : {', '.join(added)}")
         if removed: parts.append(f"❌ Retiré : {', '.join(removed)}")
         await i.response.send_message("\n".join(parts) or "Aucun changement", ephemeral=True)
 
 class RoleMenuView(discord.ui.View):
-    def __init__(self, roles): super().__init__(timeout=None); self.add_item(RoleMenu(roles))
+    def __init__(self, roles, guild_id: int):
+        super().__init__(timeout=None)
+        self.add_item(RoleMenu(roles, guild_id))
 
 class ReglModal(discord.ui.Modal, title="✍️ Règlement"):
     contenu = discord.ui.TextInput(label="Règlement", style=discord.TextStyle.paragraph, max_length=2000)
@@ -1783,23 +1802,31 @@ async def music_play(i: discord.Interaction, recherche: str):
         return await i.response.send_message(embed=er("Permission manquante"), ephemeral=True)
     await i.response.defer()
     gid = str(i.guild.id)
-    await i.followup.send(embed=inf(f"♪  Recherche...", f"🔍 `{recherche}`"))
+    search_msg = await i.followup.send(embed=inf("♪  Recherche...", f"🔍 `{recherche}`"), wait=True)
     track = await fetch_track(recherche)
     if not track or not track.get('url'):
-        return await i.edit_original_response(embed=er("Introuvable", "Aucun résultat."))
+        await search_msg.edit(embed=er("Introuvable", "Aucun résultat. Essaie un autre titre."))
+        return
     vc = bot.vc_pool.get(gid)
     if not vc or not vc.is_connected():
-        try: vc = await vc_ch.connect(); bot.vc_pool[gid] = vc
+        try:
+            vc = await vc_ch.connect()
+            bot.vc_pool[gid] = vc
         except Exception as ex:
-            return await i.edit_original_response(embed=er("Erreur vocal", str(ex)[:100]))
+            await search_msg.edit(embed=er("Erreur vocal", str(ex)[:100]))
+            return
     bot.queues.setdefault(gid, []).append(track)
     if not vc.is_playing() and not vc.is_paused():
         await next_track(gid)
-        await i.edit_original_response(embed=None, view=MusicLayout(track, "▶ Lecture"))
+        try: await search_msg.delete()
+        except: pass
+        await i.followup.send(view=MusicLayout(track, "▶ Lecture"))
     else:
         pos = len(bot.queues.get(gid, []))
         track["_pos"] = pos
-        await i.edit_original_response(embed=None, view=MusicLayout(track, f"📋 Ajouté #{pos}"))
+        try: await search_msg.delete()
+        except: pass
+        await i.followup.send(view=MusicLayout(track, f"📋 Ajouté #{pos}"))
 
 @music_group.command(name="pause", description="Mettre en pause")
 async def music_pause(i: discord.Interaction):
@@ -2305,7 +2332,7 @@ async def server_rolemenu(i: discord.Interaction, titre: str, roles: str):
     if not check_perms(i.channel, i.guild.me):
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
     await i.response.defer(ephemeral=True)
-    await i.channel.send(embed=e, view=RoleMenuView(objs))
+    await i.channel.send(embed=e, view=RoleMenuView(objs, i.guild.id))
     await i.followup.send(embed=ok("Menu créé !"), ephemeral=True)
 
 @server_group.command(name="tempvoice", description="Salons vocaux temporaires")

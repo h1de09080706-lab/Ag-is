@@ -43,7 +43,7 @@ PERSIST_KEYS = [
     'giveaways', 'polls', 'warnings', 'xp_data', 'arrivee', 'depart_ch',
     'auto_roles', 'verif_roles', 'logs_ch', 'ticket_cfg', 'temp_voices',
     'raid_cfg', 'spam_cfg', 'nuke_cfg', 'backups', 'verif_quiz',
-    'logs_filters', 'tempbans', 'mod_history', 'nuke_paused_until',
+    'logs_filters', 'tempbans', 'mod_history', 'nuke_paused_until', 'rolemenu_cfg',
 ]
 
 def _load_data() -> dict:
@@ -491,6 +491,7 @@ class Aegis(commands.Bot):
         self.nuke_track  = {}
         self.backups     = {}
         self.verif_quiz  = {}
+        self.rolemenu_cfg = {}
         self._join_cache   = {}
         self._remove_cache = {}
         self.ai_memory: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
@@ -521,6 +522,21 @@ class Aegis(commands.Bot):
             if not p.get("ended"):
                 try: self.add_view(PollView(mid, p.get("opts", [])))
                 except Exception as e: logger.error(f"restore poll {mid}: {e}")
+        # Restaurer les vues VerifQuiz persistantes
+        for gid, cfg in self.verif_quiz.items():
+            if cfg.get("true_code") and cfg.get("role_id"):
+                try: self.add_view(VerifQuizView(gid))
+                except Exception as e: logger.error(f"restore verifquiz {gid}: {e}")
+        # Restaurer les vues RoleMenu persistantes
+        for gid, role_ids in self.rolemenu_cfg.items():
+            try:
+                guild = self.get_guild(int(gid))
+                if guild:
+                    roles = [guild.get_role(int(rid)) for rid in role_ids]
+                    roles = [r for r in roles if r]
+                    if roles:
+                        self.add_view(RoleMenuView(roles, int(gid)))
+            except Exception as e: logger.error(f"restore rolemenu {gid}: {e}")
         try:
             n = await self.tree.sync()
             logger.info(f"✅ {len(n)} commandes sync")
@@ -1510,6 +1526,51 @@ def gen_code(length=8):
     chars = chars.replace("0","").replace("O","").replace("I","").replace("1","")
     return "".join(random.choices(chars, k=length))
 
+# ══════════════════════════════════════════════
+#  VERIF QUIZ — Vue persistante globale (survit aux redéploiements)
+# ══════════════════════════════════════════════
+class VerifQuizSelect(discord.ui.Select):
+    """Select persistant pour la vérification par code — relit bot.verif_quiz à chaque clic"""
+    def __init__(self, gid: str):
+        self.gid = gid
+        cfg = bot.verif_quiz.get(gid, {})
+        true_code  = cfg.get("true_code", "")
+        # On stocke tous les codes (true + faux) dans verif_quiz pour pouvoir les restaurer
+        all_codes  = cfg.get("all_codes", [true_code] if true_code else ["???"])
+        options = [
+            discord.SelectOption(label=f"Code Numéro {idx+1}", description=code, value=code)
+            for idx, code in enumerate(all_codes)
+        ]
+        super().__init__(
+            placeholder="Choisi le bon code...",
+            min_values=1, max_values=1,
+            options=options,
+            custom_id=f"verif_select_{gid}"
+        )
+    async def callback(self, inter: discord.Interaction):
+        cfg = bot.verif_quiz.get(str(inter.guild.id))
+        if not cfg:
+            return await inter.response.send_message("❌ Configuration introuvable. Refais `/server verification_quiz`.", ephemeral=True)
+        if self.values[0] == cfg["true_code"]:
+            r = inter.guild.get_role(int(cfg["role_id"]))
+            if not r:
+                return await inter.response.send_message("❌ Rôle introuvable.", ephemeral=True)
+            if r in inter.user.roles:
+                return await inter.response.send_message("✅ Tu es déjà vérifié !", ephemeral=True)
+            try:
+                await inter.user.add_roles(r)
+                await inter.response.send_message(f"✅ Bon code ! Rôle {r.mention} attribué.", ephemeral=True)
+            except discord.Forbidden:
+                await inter.response.send_message("❌ Permission manquante.", ephemeral=True)
+        else:
+            await inter.response.send_message("❌ Mauvais code. Réessaie !", ephemeral=True)
+
+class VerifQuizView(discord.ui.View):
+    def __init__(self, gid: str):
+        super().__init__(timeout=None)
+        self.add_item(VerifQuizSelect(gid))
+
+
 class QuizSelect(discord.ui.Select):
     def __init__(self, gid, choices, role_id):
         nums = ["Code Numero 1","Code Numero 2","Code Numero 3","Code Numero 4"]
@@ -2193,39 +2254,23 @@ async def server_verif_quiz(i: discord.Interaction, role: discord.Role,
     fake_codes = [gen_code() for _ in range(nb_faux)]
     all_codes  = [true_code] + fake_codes
     random.shuffle(all_codes)
-    bot.verif_quiz[gid] = {"true_code": true_code, "role_id": role.id}
+    # Sauvegarder true_code + all_codes + role_id pour restauration après redéploiement
+    bot.verif_quiz[gid] = {
+        "true_code": true_code,
+        "role_id": role.id,
+        "all_codes": all_codes  # nécessaire pour recréer la vue après redémarrage
+    }
+    _save_data()
     options = [
         discord.SelectOption(label=f"Code Numéro {idx+1}", description=code_val, value=code_val)
         for idx, code_val in enumerate(all_codes)
     ]
-    class VerifSelect(discord.ui.Select):
-        def __init__(self):
-            super().__init__(placeholder="Choisi le bon code...", min_values=1, max_values=1,
-                             options=options, custom_id=f"verif_select_{gid}")
-        async def callback(self, inter: discord.Interaction):
-            cfg = bot.verif_quiz.get(str(inter.guild.id))
-            if not cfg:
-                return await inter.response.send_message("Configuration introuvable.", ephemeral=True)
-            if self.values[0] == cfg["true_code"]:
-                r = inter.guild.get_role(cfg["role_id"])
-                if not r: return await inter.response.send_message("Rôle introuvable.", ephemeral=True)
-                if r in inter.user.roles: return await inter.response.send_message("✅ Déjà vérifié !", ephemeral=True)
-                try:
-                    await inter.user.add_roles(r)
-                    await inter.response.send_message(f"✅ Bon code ! Rôle {r.mention} attribué.", ephemeral=True)
-                except discord.Forbidden:
-                    await inter.response.send_message("❌ Permission manquante.", ephemeral=True)
-            else:
-                await inter.response.send_message("❌ Mauvais code. Réessaie !", ephemeral=True)
-    class VerifView2(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=None)
-            self.add_item(VerifSelect())
     bar = "─" * 8
     e = discord.Embed(title=titre, description=description, color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
     e.add_field(name="\u200b", value=f"```\n{bar}  {true_code}  {bar}\n```", inline=False)
     e.set_footer(text="AEGIS AI  ◈  Choisis le bon code dans le menu ci-dessous")
-    await i.channel.send(embed=e, view=VerifView2())
+    # Utiliser la vue globale persistante (survit aux redéploiements)
+    await i.channel.send(embed=e, view=VerifQuizView(gid))
     await i.followup.send(embed=ok("Vérification créée !", f"Bon code : `{true_code}`\nRôle : {role.mention}"), ephemeral=True)
 
 @server_group.command(name="backup", description="Sauvegarder la structure du serveur")
@@ -2332,6 +2377,10 @@ async def server_rolemenu(i: discord.Interaction, titre: str, roles: str):
     if not check_perms(i.channel, i.guild.me):
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
     await i.response.defer(ephemeral=True)
+    # Sauvegarder les IDs de rôles pour pouvoir restaurer la vue au redémarrage
+    bot.rolemenu_cfg.setdefault(str(i.guild.id), [])
+    bot.rolemenu_cfg[str(i.guild.id)] = [r.id for r in objs]
+    _save_data()
     await i.channel.send(embed=e, view=RoleMenuView(objs, i.guild.id))
     await i.followup.send(embed=ok("Menu créé !"), ephemeral=True)
 
@@ -2454,6 +2503,12 @@ async def server_creerole(i: discord.Interaction, nom: str, couleur: str="#00FFF
 @app_commands.describe(membre="Le membre", role="Le rôle")
 @app_commands.default_permissions(manage_roles=True)
 async def server_addrole(i: discord.Interaction, membre: discord.Member, role: discord.Role):
+    # Vérification RÉELLE côté code — default_permissions seul ne suffit pas
+    if not i.user.guild_permissions.manage_roles:
+        return await i.response.send_message(embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les rôles`."), ephemeral=True)
+    # Empêcher d'attribuer un rôle plus haut que soi
+    if role >= i.user.top_role and i.user.id != i.guild.owner_id:
+        return await i.response.send_message(embed=er("Impossible", "Tu ne peux pas attribuer un rôle supérieur ou égal au tien."), ephemeral=True)
     try:
         await membre.add_roles(role)
         await i.response.send_message(embed=ok("Rôle ajouté", f"{role.mention} → {membre.mention}"))
@@ -2464,6 +2519,10 @@ async def server_addrole(i: discord.Interaction, membre: discord.Member, role: d
 @app_commands.describe(membre="Le membre", role="Le rôle")
 @app_commands.default_permissions(manage_roles=True)
 async def server_removerole(i: discord.Interaction, membre: discord.Member, role: discord.Role):
+    if not i.user.guild_permissions.manage_roles:
+        return await i.response.send_message(embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les rôles`."), ephemeral=True)
+    if role >= i.user.top_role and i.user.id != i.guild.owner_id:
+        return await i.response.send_message(embed=er("Impossible", "Tu ne peux pas retirer un rôle supérieur ou égal au tien."), ephemeral=True)
     try:
         await membre.remove_roles(role)
         await i.response.send_message(embed=inf("Rôle retiré", f"{role.mention} retiré de {membre.mention}"))

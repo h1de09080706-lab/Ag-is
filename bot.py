@@ -2553,6 +2553,10 @@ async def server_antinuke(i: discord.Interaction, activer: bool=True, seuil: int
 @server_group.command(name="suggestion", description="Envoyer une suggestion")
 @app_commands.describe(texte="Ta suggestion", salon="Salon suggestions")
 async def server_suggestion(i: discord.Interaction, texte: str, salon: Optional[discord.TextChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     if not salon:
         for n in ["💡・suggestions","suggestions","suggest"]:
             salon = discord.utils.get(i.guild.text_channels, name=n)
@@ -3041,6 +3045,10 @@ async def owner_dmall_ultime(i: discord.Interaction, message: str):
 @app_commands.describe(minutes="Durée de la pause en minutes (0 = annuler)")
 @app_commands.default_permissions(administrator=True)
 async def server_antinuke_pause(i: discord.Interaction, minutes: int = 30):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     if minutes <= 0:
         bot.nuke_paused_until.pop(gid, None)
@@ -3058,6 +3066,10 @@ LOG_TYPES = ["ban", "kick", "mute", "warn", "unban", "purge", "tempban", "antinu
 @app_commands.describe(types="Liste séparée par virgules (ex: ban,kick,mute) — 'all' pour tout, 'reset' pour défaut")
 @app_commands.default_permissions(administrator=True)
 async def server_logs_filter(i: discord.Interaction, types: str = "all"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     t = types.strip().lower()
     if t == "all":
@@ -3078,6 +3090,10 @@ async def server_logs_filter(i: discord.Interaction, types: str = "all"):
 @app_commands.describe(membre="Le membre", duree="Durée (ex: 10m, 2h, 7j)", raison="Raison")
 @app_commands.default_permissions(ban_members=True)
 async def mod_tempban(i: discord.Interaction, membre: discord.Member, duree: str, raison: str = "Aucune"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.ban_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Bannir des membres`."), ephemeral=True)
     if not can_target(i.user, membre):
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
@@ -3106,6 +3122,10 @@ async def mod_tempban(i: discord.Interaction, membre: discord.Member, duree: str
 @app_commands.describe(membre="Le membre")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_historique(i: discord.Interaction, membre: discord.Member):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     hist = bot.mod_history.get(str(i.guild.id), {}).get(str(membre.id), [])
     if not hist:
         return await i.response.send_message(embed=inf("Historique vide", f"{membre.mention} est clean ✅"), ephemeral=True)

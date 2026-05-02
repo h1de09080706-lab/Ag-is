@@ -1667,6 +1667,10 @@ mod_group = ModGroup()
 @app_commands.describe(membre="Le membre", raison="Raison")
 @app_commands.default_permissions(ban_members=True)
 async def mod_ban(i: discord.Interaction, membre: discord.Member, raison: str="Aucune"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.ban_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Bannir des membres`."), ephemeral=True)
     if not can_target(i.user, membre):
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
@@ -1681,6 +1685,10 @@ async def mod_ban(i: discord.Interaction, membre: discord.Member, raison: str="A
 @app_commands.describe(user_id="ID de l'utilisateur")
 @app_commands.default_permissions(ban_members=True)
 async def mod_unban(i: discord.Interaction, user_id: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.ban_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Bannir des membres`."), ephemeral=True)
     try:
         user = await bot.fetch_user(int(user_id))
         await i.guild.unban(user)
@@ -1692,6 +1700,10 @@ async def mod_unban(i: discord.Interaction, user_id: str):
 @app_commands.describe(membre="Le membre", raison="Raison")
 @app_commands.default_permissions(kick_members=True)
 async def mod_kick(i: discord.Interaction, membre: discord.Member, raison: str="Aucune"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.kick_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Expulser des membres`."), ephemeral=True)
     if not can_target(i.user, membre):
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
@@ -1706,6 +1718,10 @@ async def mod_kick(i: discord.Interaction, membre: discord.Member, raison: str="
 @app_commands.describe(membre="Le membre", duree="Durée en minutes")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_mute(i: discord.Interaction, membre: discord.Member, duree: int=10):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     if not can_target(i.user, membre):
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     try:
@@ -1721,6 +1737,10 @@ async def mod_mute(i: discord.Interaction, membre: discord.Member, duree: int=10
 @app_commands.describe(membre="Le membre")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_unmute(i: discord.Interaction, membre: discord.Member):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     try:
         await membre.timeout(None)
         await i.response.send_message(embed=ok("Unmute", f"{membre.mention}"))
@@ -1731,6 +1751,10 @@ async def mod_unmute(i: discord.Interaction, membre: discord.Member):
 @app_commands.describe(membre="Le membre", raison="Raison")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_warn(i: discord.Interaction, membre: discord.Member, raison: str="Aucune raison"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     if not can_target(i.user, membre):
         return await i.response.send_message(embed=er("Impossible"), ephemeral=True)
     gid, uid = str(i.guild.id), str(membre.id)
@@ -1759,6 +1783,10 @@ async def mod_warn(i: discord.Interaction, membre: discord.Member, raison: str="
 @app_commands.describe(membre="Le membre")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_unwarn(i: discord.Interaction, membre: discord.Member):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     gid, uid = str(i.guild.id), str(membre.id)
     lst = bot.warnings.get(gid, {}).get(uid, [])
     if not lst:
@@ -1770,6 +1798,10 @@ async def mod_unwarn(i: discord.Interaction, membre: discord.Member):
 @app_commands.describe(membre="Le membre (vide = toi)")
 @app_commands.default_permissions(moderate_members=True)
 async def mod_warns(i: discord.Interaction, membre: Optional[discord.Member]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.moderate_members:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Mettre en sourdine`."), ephemeral=True)
     m = membre or i.user
     lst = bot.warnings.get(str(i.guild.id), {}).get(str(m.id), [])
     if not lst:
@@ -1784,6 +1816,10 @@ async def mod_warns(i: discord.Interaction, membre: Optional[discord.Member]=Non
 @app_commands.describe(nombre="Nombre de messages (max 100)")
 @app_commands.default_permissions(manage_messages=True)
 async def mod_purge(i: discord.Interaction, nombre: int):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     if nombre <= 0:
         return await i.response.send_message(embed=er("Nombre invalide", "Indique un nombre entre 1 et 100."), ephemeral=True)
     await i.response.defer(ephemeral=True)
@@ -1794,6 +1830,10 @@ async def mod_purge(i: discord.Interaction, nombre: int):
 @app_commands.describe(membre="Le membre", pseudo="Nouveau pseudo")
 @app_commands.default_permissions(manage_nicknames=True)
 async def mod_rename(i: discord.Interaction, membre: discord.Member, pseudo: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_nicknames:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les pseudos`."), ephemeral=True)
     old = membre.display_name
     try:
         await membre.edit(nick=pseudo)
@@ -1805,6 +1845,10 @@ async def mod_rename(i: discord.Interaction, membre: discord.Member, pseudo: str
 @app_commands.describe(salon="Salon (vide = actuel)", lecture="Bloquer aussi la lecture")
 @app_commands.default_permissions(manage_channels=True)
 async def mod_lock(i: discord.Interaction, salon: Optional[discord.TextChannel]=None, lecture: bool=False):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     target = salon or i.channel
     await i.response.defer(ephemeral=True)
     try:
@@ -1820,6 +1864,10 @@ async def mod_lock(i: discord.Interaction, salon: Optional[discord.TextChannel]=
 @app_commands.describe(salon="Salon (vide = actuel)")
 @app_commands.default_permissions(manage_channels=True)
 async def mod_unlock(i: discord.Interaction, salon: Optional[discord.TextChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     target = salon or i.channel
     await i.response.defer(ephemeral=True)
     try:
@@ -1834,6 +1882,10 @@ async def mod_unlock(i: discord.Interaction, salon: Optional[discord.TextChannel
 @app_commands.describe(secondes="Délai en secondes (0 = désactiver)", salon="Salon cible (vide = actuel)")
 @app_commands.default_permissions(manage_channels=True)
 async def mod_slowmode(i: discord.Interaction, secondes: int, salon: Optional[discord.TextChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     target = salon or i.channel
     await i.response.defer(ephemeral=True)
     try:
@@ -2109,6 +2161,10 @@ server_group = ServerGroup()
     app_commands.Choice(name="🎌 Anime/Manga", value="anime")])
 @app_commands.default_permissions(administrator=True)
 async def server_setup(i: discord.Interaction, style: str="communaute"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer()
     g = i.guild; cfg = SETUPS[style]; created = {"roles":0,"text":0,"voice":0}
     for name, color in cfg["roles"]:
@@ -2145,6 +2201,10 @@ async def server_setup(i: discord.Interaction, style: str="communaute"):
 @app_commands.describe(salon_id="ID du salon")
 @app_commands.default_permissions(administrator=True)
 async def server_arrivee(i: discord.Interaction, salon_id: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     clean = salon_id.strip().replace("<#","").replace(">","").strip()
     try:
         cid = int(clean)
@@ -2160,6 +2220,10 @@ async def server_arrivee(i: discord.Interaction, salon_id: str):
 @app_commands.describe(salon_id="ID du salon")
 @app_commands.default_permissions(administrator=True)
 async def server_depart(i: discord.Interaction, salon_id: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     clean = salon_id.strip().replace("<#","").replace(">","").strip()
     try:
         cid = int(clean)
@@ -2177,6 +2241,10 @@ async def server_panel(i: discord.Interaction, titre: str="Support",
                         description: str="Clique pour ouvrir un ticket.",
                         role_support: Optional[discord.Role]=None,
                         image: Optional[str]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     bot.ticket_cfg[str(i.guild.id)] = {"sr": role_support.id if role_support else None}
     if not check_perms(i.channel, i.guild.me):
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
@@ -2197,6 +2265,10 @@ async def server_panel(i: discord.Interaction, titre: str="Support",
 @app_commands.default_permissions(administrator=True)
 async def server_reglement(i: discord.Interaction, type_reglement: str="def",
                             avec_bouton: bool=True, role: Optional[discord.Role]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     if type_reglement == "custom":
         return await i.response.send_modal(ReglModal(avec_bouton, role))
     if role: bot.verif_roles[str(i.guild.id)] = role.id
@@ -2221,6 +2293,10 @@ async def server_reglement(i: discord.Interaction, type_reglement: str="def",
 @app_commands.default_permissions(administrator=True)
 async def server_verification(i: discord.Interaction, role: Optional[discord.Role]=None,
                                titre: str="Vérification", description: str="Clique pour te vérifier !"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     if not role:
         role = discord.utils.get(i.guild.roles, name="✅ Vérifié")
@@ -2246,6 +2322,10 @@ async def server_verif_quiz(i: discord.Interaction, role: discord.Role,
                              titre: str="◈  Vérification",
                              description: str="Sélectionne le bon code pour accéder au serveur.",
                              nb_faux: int=3):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     if not check_perms(i.channel, i.guild.me):
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
@@ -2277,6 +2357,10 @@ async def server_verif_quiz(i: discord.Interaction, role: discord.Role,
 @app_commands.describe(nom="Nom de la sauvegarde")
 @app_commands.default_permissions(administrator=True)
 async def server_backup(i: discord.Interaction, nom: Optional[str]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer(ephemeral=True)
     g = i.guild
     name = nom or f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2297,6 +2381,10 @@ async def server_backup(i: discord.Interaction, nom: Optional[str]=None):
 @app_commands.describe(nom="Nom (vide = voir la liste)")
 @app_commands.default_permissions(administrator=True)
 async def server_restore(i: discord.Interaction, nom: Optional[str]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer(ephemeral=True)
     gid = str(i.guild.id); saves = bot.backups.get(gid, {})
     if not nom or not nom.strip():
@@ -2335,6 +2423,10 @@ async def server_restore(i: discord.Interaction, nom: Optional[str]=None):
 @app_commands.default_permissions(administrator=True)
 async def server_autorole(i: discord.Interaction, action: str="add",
                            role: Optional[discord.Role]=None, reset: bool=False):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     current = bot.auto_roles.get(gid, [])
     if isinstance(current, int): current = [current]
@@ -2364,6 +2456,10 @@ async def server_autorole(i: discord.Interaction, action: str="add",
 @app_commands.describe(titre="Titre du menu", roles="Mentions des rôles")
 @app_commands.default_permissions(administrator=True)
 async def server_rolemenu(i: discord.Interaction, titre: str, roles: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     ids = re.findall(r'<@&(\d+)>', roles) or re.findall(r'\b(\d{17,20})\b', roles)
     objs = [i.guild.get_role(int(x)) for x in ids if i.guild.get_role(int(x))]
     if not objs:
@@ -2388,6 +2484,10 @@ async def server_rolemenu(i: discord.Interaction, titre: str, roles: str):
 @app_commands.describe(salon="Salon déclencheur")
 @app_commands.default_permissions(administrator=True)
 async def server_tempvoice(i: discord.Interaction, salon: discord.VoiceChannel):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     bot.temp_voices[str(i.guild.id)] = salon.id
     await i.response.send_message(embed=ok("Vocaux temporaires",
         f"Rejoins **{salon.name}** pour créer ton salon automatiquement !"))
@@ -2396,6 +2496,10 @@ async def server_tempvoice(i: discord.Interaction, salon: discord.VoiceChannel):
 @app_commands.describe(activer="Activer", seuil="Joins par 10s", action="kick ou ban")
 @app_commands.default_permissions(administrator=True)
 async def server_antiraid(i: discord.Interaction, activer: bool=True, seuil: int=5, action: str="kick"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     bot.raid_cfg[str(i.guild.id)] = {"enabled":activer,"threshold":seuil,"action":action}
     await i.response.send_message(embed=emb("◈  Anti-Raid",
         f"**Statut :** {'✅ Activé' if activer else '❌ Désactivé'}\n**Seuil :** {seuil}/10s\n**Action :** {action}", C.NEON_PINK))
@@ -2406,6 +2510,10 @@ async def server_antiraid(i: discord.Interaction, activer: bool=True, seuil: int
 @app_commands.default_permissions(administrator=True)
 async def server_antispam(i: discord.Interaction, activer: bool=True, messages: int=5,
                            fenetre: int=5, mentions: int=5, action: str="mute", duree_mute: int=5):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     bot.spam_cfg[str(i.guild.id)] = {"enabled":activer,"limit":messages,"window":fenetre,
                                       "mentions":mentions,"action":action,"dur":duree_mute}
     await i.response.send_message(embed=emb("◈  Anti-Spam",
@@ -2418,6 +2526,10 @@ async def server_antispam(i: discord.Interaction, activer: bool=True, messages: 
 async def server_antinuke(i: discord.Interaction, activer: bool=True, seuil: int=5,
                            action: str="kick", whitelist_add: Optional[str]=None,
                            whitelist_rem: Optional[str]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     gid = str(i.guild.id)
     cfg = bot.nuke_cfg.setdefault(gid, default_nuke_cfg())
     cfg.update({"enabled":activer,"threshold":max(1,seuil),
@@ -2461,6 +2573,10 @@ async def server_suggestion(i: discord.Interaction, texte: str, salon: Optional[
 @app_commands.describe(nom="Nom du salon", categorie="Catégorie (optionnel)")
 @app_commands.default_permissions(manage_channels=True)
 async def server_creersalon(i: discord.Interaction, nom: str, categorie: Optional[discord.CategoryChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     try:
         ch = await i.guild.create_text_channel(nom, category=categorie)
         await i.response.send_message(embed=ok("Salon créé", ch.mention))
@@ -2471,6 +2587,10 @@ async def server_creersalon(i: discord.Interaction, nom: str, categorie: Optiona
 @app_commands.describe(nom="Nom du salon", categorie="Catégorie (optionnel)")
 @app_commands.default_permissions(manage_channels=True)
 async def server_creervoice(i: discord.Interaction, nom: str, categorie: Optional[discord.CategoryChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     try:
         ch = await i.guild.create_voice_channel(nom, category=categorie)
         await i.response.send_message(embed=ok("Vocal créé", f"🔊 {ch.name}"))
@@ -2481,6 +2601,10 @@ async def server_creervoice(i: discord.Interaction, nom: str, categorie: Optiona
 @app_commands.describe(salon="Le salon à supprimer")
 @app_commands.default_permissions(manage_channels=True)
 async def server_supprimersalon(i: discord.Interaction, salon: discord.TextChannel):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     name = salon.name
     try:
         await salon.delete()
@@ -2492,6 +2616,10 @@ async def server_supprimersalon(i: discord.Interaction, salon: discord.TextChann
 @app_commands.describe(nom="Nom du rôle", couleur="Couleur hex (ex: #FF00FF)")
 @app_commands.default_permissions(manage_roles=True)
 async def server_creerole(i: discord.Interaction, nom: str, couleur: str="#00FFFF"):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_roles:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les rôles`."), ephemeral=True)
     try:
         color = discord.Color(int(couleur.replace("#",""), 16))
         role = await i.guild.create_role(name=nom, color=color)
@@ -2533,6 +2661,10 @@ async def server_removerole(i: discord.Interaction, membre: discord.Member, role
 @app_commands.describe(role="Le rôle")
 @app_commands.default_permissions(administrator=True)
 async def server_roleall(i: discord.Interaction, role: discord.Role):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer()
     count = 0
     for m in i.guild.members:

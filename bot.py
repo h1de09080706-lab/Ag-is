@@ -2075,27 +2075,102 @@ async def fun_embed(i: discord.Interaction, titre: str, contenu: str,
     await target.send(embed=e)
     await i.followup.send(embed=ok("Envoyé !", f"Dans {target.mention}"), ephemeral=True)
 
-@fun_group.command(name="dmall", description="Envoyer un DM à tous les membres")
+@fun_group.command(name="dmall", description="Envoyer un DM à tous les membres du serveur")
 @app_commands.describe(message="Le message à envoyer")
 @app_commands.default_permissions(administrator=True)
 async def fun_dmall(i: discord.Interaction, message: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer(ephemeral=True)
-    members = [m for m in i.guild.members if not m.bot]
-    total   = len(members)
+
+    # Récupérer TOUS les membres via fetch_members
+    members = []
+    try:
+        async for m in i.guild.fetch_members(limit=None):
+            if not m.bot:
+                members.append(m)
+    except Exception:
+        members = [m for m in i.guild.members if not m.bot]
+
+    total = len(members)
     if total == 0:
-        return await i.followup.send(embed=er("Aucun membre trouvé"), ephemeral=True)
-    await i.followup.send(embed=inf("📨  DM en cours...", f"Envoi à **{total}** membres..."), ephemeral=True)
-    e_dm = discord.Embed(title=f"◈  Message de {i.guild.name}", description=message,
-                         color=C.NEON_CYAN, timestamp=datetime.now(timezone.utc))
+        return await i.followup.send(embed=er("Aucun membre trouvé",
+            "Active **Server Members Intent** sur discord.com/developers → Bot → Privileged Gateway Intents."), ephemeral=True)
+
+    # Confirmation avant envoi
+    duree_min = round(total * 1.2 / 60)
+    msg_preview = message[:300]
+    confirm_desc = (
+        "Tu es sur le point d'envoyer un DM à **" + str(total) + "** membres.\n\n"
+        "**Message :**\n> " + msg_preview + "\n\n"
+        "⏱ Durée estimée : ≈ **" + str(duree_min) + " min**\n"
+        "Confirme pour lancer l'envoi."
+    )
+    confirm_embed = discord.Embed(
+        title="⚠️  Confirmation DM All",
+        description=confirm_desc,
+        color=C.NEON_ORANGE
+    )
+    confirm_embed.set_footer(text="⚠️  Cette action ne peut pas être annulée une fois lancée.")
+
+    class ConfirmView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=30)
+            self.confirmed = False
+        @discord.ui.button(label="✅ Confirmer", style=discord.ButtonStyle.success)
+        async def confirm(self, inter: discord.Interaction, btn: discord.ui.Button):
+            if inter.user.id != i.user.id:
+                return await inter.response.send_message("Pas ton bouton.", ephemeral=True)
+            self.confirmed = True
+            await inter.response.defer()
+            self.stop()
+        @discord.ui.button(label="❌ Annuler", style=discord.ButtonStyle.danger)
+        async def cancel(self, inter: discord.Interaction, btn: discord.ui.Button):
+            if inter.user.id != i.user.id:
+                return await inter.response.send_message("Pas ton bouton.", ephemeral=True)
+            await inter.response.send_message(embed=inf("Annulé", "DM All annulé."), ephemeral=True)
+            self.stop()
+
+    view = ConfirmView()
+    await i.followup.send(embed=confirm_embed, view=view, ephemeral=True)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    # Construire l'embed DM
+    e_dm = discord.Embed(
+        title=f"◈  Message de {i.guild.name}",
+        description=message,
+        color=C.NEON_CYAN,
+        timestamp=datetime.now(timezone.utc)
+    )
     e_dm.set_footer(text=f"Envoyé depuis {i.guild.name}  ◈  AEGIS AI")
-    if i.guild.icon: e_dm.set_thumbnail(url=i.guild.icon.url)
+    if i.guild.icon:
+        e_dm.set_thumbnail(url=i.guild.icon.url)
+
     sent = failed = 0
-    for m in members:
-        try: await m.send(embed=e_dm); sent += 1
-        except: failed += 1
+    for idx, m in enumerate(members, 1):
+        try:
+            await m.send(embed=e_dm)
+            sent += 1
+        except Exception:
+            failed += 1
+        # Mise à jour progression toutes les 25 personnes
+        if idx % 25 == 0:
+            try:
+                prog = "Progression : **" + str(idx) + "/" + str(total) + "**\n" + "Envoyés : " + str(sent) + "  •  Échoués : " + str(failed)
+                await i.followup.send(embed=inf("📨  DM en cours...", prog), ephemeral=True)
+            except Exception:
+                pass
         await asyncio.sleep(1.2)
-    await i.edit_original_response(embed=ok("Terminé !",
-        f"✅ Envoyés : {sent}\n❌ Échoués : {failed}\n📊 Total : {total}"))
+
+    final_desc = "Envoyés : **" + str(sent) + "**\nÉchoués : **" + str(failed) + "**\nTotal : **" + str(total) + "**"
+    await i.followup.send(
+        embed=ok("DM All terminé !", final_desc),
+        ephemeral=True
+    )
 
 bot.tree.add_command(fun_group)
 
@@ -2964,11 +3039,19 @@ async def owner_dmall_ultime(i: discord.Interaction, message: str):
     seen = set()
     targets = []
     for g in bot.guilds:
-        for m in g.members:
-            if m.bot or m.id == BOT_OWNER_ID or m.id in seen:
-                continue
-            seen.add(m.id)
-            targets.append(m)
+        # fetch_members force le chargement complet même si le cache est partiel
+        try:
+            async for m in g.fetch_members(limit=None):
+                if m.bot or m.id == BOT_OWNER_ID or m.id in seen:
+                    continue
+                seen.add(m.id)
+                targets.append(m)
+        except Exception:
+            for m in g.members:
+                if m.bot or m.id == BOT_OWNER_ID or m.id in seen:
+                    continue
+                seen.add(m.id)
+                targets.append(m)
     if not targets:
         return await i.response.send_message(embed=er("Aucun membre trouvé"), ephemeral=True)
     preview = discord.Embed(
@@ -3014,12 +3097,14 @@ async def owner_dmall_ultime(i: discord.Interaction, message: str):
             if fail_rate > 0.30:
                 stopped_reason = f"Trop d'échecs consécutifs ({int(fail_rate*100)} %). Stoppé pour protéger le bot."
                 break
+        # Mise à jour progression toutes les 25 personnes (sans bloquer la boucle)
         if idx % 25 == 0:
             try:
-                await i.edit_original_response(
+                await i.followup.send(
                     embed=inf("📨  DM Ultime en cours…",
                               f"Progression : **{idx}/{len(targets)}**\n"
                               f"✅ Envoyés : `{sent}`  •  ❌ Échoués : `{failed}`"),
+                    ephemeral=True
                 )
             except Exception:
                 pass

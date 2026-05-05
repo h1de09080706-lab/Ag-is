@@ -1626,6 +1626,10 @@ async def ai_chat(i: discord.Interaction, message: str):
 @ai_group.command(name="relance", description="AEGIS AI relance la conversation dans ce salon")
 @app_commands.default_permissions(manage_messages=True)
 async def ai_relance(i: discord.Interaction):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     await i.response.defer()
     rep = await ask_groq(f"Le serveur {i.guild.name} est calme. Relance la conversation.", system=AI_SYS_RELANCE)
     await i.followup.send(f"◉ {rep}")
@@ -1634,6 +1638,10 @@ async def ai_relance(i: discord.Interaction):
 @app_commands.describe(activer="Activer le mode IA")
 @app_commands.default_permissions(manage_channels=True)
 async def ai_mode(i: discord.Interaction, activer: bool):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_channels:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les salons`."), ephemeral=True)
     cid = str(i.channel.id)
     bot.ai_active[cid] = activer
     if activer:
@@ -1646,12 +1654,20 @@ async def ai_mode(i: discord.Interaction, activer: bool):
 @ai_group.command(name="memory", description="Effacer la mémoire IA de ce salon")
 @app_commands.default_permissions(manage_messages=True)
 async def ai_memory_clear(i: discord.Interaction):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     bot.ai_memory.pop(str(i.channel.id), None)
     await i.response.send_message(embed=ok("Mémoire effacée", "Je repars de zéro dans ce salon."), ephemeral=True)
 
 @ai_group.command(name="question", description="AEGIS AI pose une question fun au serveur")
 @app_commands.default_permissions(manage_messages=True)
 async def ai_question(i: discord.Interaction):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     await i.response.defer()
     rep = await ask_groq("Pose une question fun, originale ou débat. Max 1 phrase. Style GLaDOS.", system=AI_SYS_RELANCE)
     await i.followup.send(view=QuestionLayout(rep))
@@ -2045,6 +2061,10 @@ async def fun_avatar(i: discord.Interaction, membre: Optional[discord.Member]=No
 @app_commands.describe(message="Le message", salon="Salon cible (vide = actuel)")
 @app_commands.default_permissions(manage_messages=True)
 async def fun_dire(i: discord.Interaction, message: str, salon: Optional[discord.TextChannel]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     target = salon or i.channel
     perms  = target.permissions_for(i.guild.me)
     if not perms.view_channel or not perms.send_messages:
@@ -2060,6 +2080,10 @@ async def fun_dire(i: discord.Interaction, message: str, salon: Optional[discord
 async def fun_embed(i: discord.Interaction, titre: str, contenu: str,
                     couleur: str="#00FFFF", salon: Optional[discord.TextChannel]=None,
                     image: Optional[str]=None, miniature: Optional[str]=None):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     target = salon or i.channel
     perms  = target.permissions_for(i.guild.me)
     if not perms.view_channel or not perms.send_messages or not perms.embed_links:
@@ -2773,6 +2797,10 @@ events_group = EventsGroup()
 @app_commands.describe(titre="Titre", prix="Prix", duree="Durée (ex: 10m, 2h, 1j)", gagnants="Nb gagnants")
 @app_commands.default_permissions(administrator=True)
 async def events_giveaway(i: discord.Interaction, titre: str, prix: str, duree: str, gagnants: int=1):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     perms = i.channel.permissions_for(i.guild.me)
     if not perms.view_channel or not perms.send_messages or not perms.embed_links:
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
@@ -2808,6 +2836,10 @@ async def events_giveaway(i: discord.Interaction, titre: str, prix: str, duree: 
 @app_commands.describe(message_id="ID du message du giveaway")
 @app_commands.default_permissions(administrator=True)
 async def events_reroll(i: discord.Interaction, message_id: str):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.administrator:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     g = bot.giveaways.get(message_id)
     if not g:              return await i.response.send_message(embed=er("Introuvable"), ephemeral=True)
     if not g.get("ended"): return await i.response.send_message(embed=er("Encore en cours"), ephemeral=True)
@@ -2834,6 +2866,10 @@ async def events_reroll(i: discord.Interaction, message_id: str):
 async def events_poll(i: discord.Interaction, question: str, option1: str, option2: str,
                        option3: Optional[str]=None, option4: Optional[str]=None,
                        option5: Optional[str]=None, duree: int=0):
+    # Vérification permission réelle
+    if not i.user.guild_permissions.manage_messages:
+        return await i.response.send_message(
+            embed=er("Permission refusée", "Tu n'as pas la permission `Gérer les messages`."), ephemeral=True)
     opts = [o for o in [option1,option2,option3,option4,option5] if o]
     end  = None
     if duree > 0: end = datetime.now(timezone.utc) + timedelta(minutes=duree)

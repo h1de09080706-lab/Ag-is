@@ -593,7 +593,7 @@ async def log(guild, title, desc, color=C.NEON_CYAN):
         ch = guild.get_channel(bot.logs_ch[gid])
         if ch:
             try: await ch.send(embed=emb(f"◈  {title}", desc, color))
-            except: pass
+            except Exception: pass
 
 def check_perms(channel, guild_me) -> bool:
     perms = channel.permissions_for(guild_me)
@@ -818,14 +818,16 @@ async def next_track(gid: str):
     try:
         fresh = await fetch_track(track.get('src') or track.get('webpage') or track.get('title',''))
         if fresh and fresh.get('url'): track['url'] = fresh['url']
-    except: pass
+    except Exception: pass
     try:
         src = discord.FFmpegPCMAudio(track['url'], **FF)
         vc.play(discord.PCMVolumeTransformer(src, 0.5),
                 after=lambda e: asyncio.run_coroutine_threadsafe(next_track(gid), bot.loop))
     except Exception as e:
         logger.error(f"next_track: {e}")
-        if bot.queues.get(gid): await next_track(gid)
+        if bot.queues.get(gid):
+            try: await next_track(gid)
+            except Exception: pass
 
 # ══════════════════════════════════════════════
 #  ANTI-SPAM
@@ -851,7 +853,7 @@ async def check_spam(msg: discord.Message) -> bool:
             await msg.channel.send(embed=warn("Anti-Spam", f"{msg.author.mention} sanctionné — {reason}"), delete_after=8)
             bot.msg_cache[uid] = []
             return True
-        except: pass
+        except Exception: pass
     return False
 
 # ══════════════════════════════════════════════
@@ -871,7 +873,7 @@ async def add_xp(msg: discord.Message):
         if guild:
             ch = guild.get_channel(bot.logs_ch.get(gid, 0)) or msg.channel
             try: await ch.send(view=LevelUpLayout(msg.author, d["level"], xp_req(d["level"]+1)))
-            except: pass
+            except Exception: pass
 
 # ══════════════════════════════════════════════
 #  ANTI-NUKE
@@ -887,13 +889,13 @@ async def nuke_check(guild: discord.Guild, uid: int, action: str):
             pause_dt = datetime.fromisoformat(pause_iso)
             if pause_dt.tzinfo is None: pause_dt = pause_dt.replace(tzinfo=timezone.utc)
             if datetime.now(timezone.utc) < pause_dt: return
-        except: pass
+        except Exception: pass
     if uid == guild.owner_id: return
     if uid in cfg.get("whitelist", []): return
     if uid == BOT_OWNER_ID: return
     try:
         if uid == guild.me.id: return
-    except: pass
+    except Exception: pass
     now = datetime.now(timezone.utc)
     tr  = bot.nuke_track.setdefault(gid, {})
     ud  = tr.setdefault(str(uid), {})
@@ -980,7 +982,7 @@ async def end_ga(mid, g):
             e = emb(f"🎉  Giveaway Terminé", f"**{g['title']}**\nAucun participant.", C.NEON_RED)
         try:
             msg = await ch.fetch_message(int(mid)); await msg.edit(embed=e, view=None)
-        except: pass
+        except Exception: pass
         if winners and ann is not None:
             try:
                 await ch.send(content="@everyone 🎉", embed=ann, allowed_mentions=discord.AllowedMentions(everyone=True))
@@ -1020,7 +1022,7 @@ async def _poll_update(msg, poll):
         try:
             v = int(v)
             if 0 <= v < len(c): c[v] += 1
-        except: pass
+        except Exception: pass
     tot = sum(c); desc = f"**{poll['q'][:300]}**\n\n"
     for idx, o in enumerate(opts):
         pct = int(c[idx]/tot*100) if tot > 0 else 0
@@ -1040,7 +1042,7 @@ async def _poll_results(poll):
         try:
             v = int(v)
             if 0 <= v < len(c): c[v] += 1
-        except: pass
+        except Exception: pass
     tot = sum(c); mx = max(c) if c else 0
     win = [opts[idx] for idx, x in enumerate(c) if x == mx and mx > 0]
     desc = f"**{poll['q'][:300]}**\n\n"
@@ -1080,7 +1082,7 @@ async def end_poll(mid, poll):
         try:
             msg = await ch.fetch_message(int(mid))
             await msg.edit(embed=await _poll_results(poll), view=None)
-        except: pass
+        except Exception: pass
         res = await _poll_results(poll)
         res.set_footer(text=f"{len(poll.get('v',{}))} votant(s)  ◈  AEGIS AI")
         await ch.send(content="@everyone ▸ **Sondage terminé !**", embed=res,
@@ -1128,7 +1130,7 @@ class CloseView(discord.ui.View):
         await i.response.send_message("Fermeture dans 5 secondes...")
         await asyncio.sleep(5)
         try: await i.channel.delete()
-        except: pass
+        except Exception: pass
 
 class VerifyView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -1144,14 +1146,14 @@ class VerifyView(discord.ui.View):
             try:
                 role = await i.guild.create_role(name="✅ Vérifié", color=discord.Color(C.NEON_GREEN))
                 bot.verif_roles[gid] = role.id
-            except:
+            except Exception:
                 return await i.response.send_message("❌ Erreur création rôle.", ephemeral=True)
         if role in i.user.roles:
             return await i.response.send_message("Déjà vérifié !", ephemeral=True)
         try:
             await i.user.add_roles(role)
             await i.response.send_message(f"✅ Vérifié ! Rôle {role.mention} attribué.", ephemeral=True)
-        except:
+        except Exception:
             await i.response.send_message("❌ Erreur permissions.", ephemeral=True)
 
 class RulesView(discord.ui.View):
@@ -1168,7 +1170,7 @@ class RulesView(discord.ui.View):
             try:
                 await i.user.add_roles(role)
                 await i.response.send_message(f"✅ Règlement accepté ! {role.mention}", ephemeral=True)
-            except:
+            except Exception:
                 await i.response.send_message("⚠️ Erreur permissions.", ephemeral=True)
         else:
             await i.response.send_message("✅ Règlement accepté !", ephemeral=True)
@@ -1382,7 +1384,7 @@ async def on_guild_join(guild: discord.Guild):
                 ch = c; break
     if not ch: return
     try: await ch.send(view=GuildJoinLayout(bot.user))
-    except: pass
+    except Exception: pass
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -1399,7 +1401,7 @@ async def on_member_join(member: discord.Member):
         try:
             if raid.get("action") == "ban": await member.ban(reason="Anti-raid")
             else: await member.kick(reason="Anti-raid")
-        except: pass
+        except Exception: pass
         return
     rids = bot.auto_roles.get(gid, [])
     if isinstance(rids, int): rids = [rids]
@@ -1407,13 +1409,13 @@ async def on_member_join(member: discord.Member):
         r = member.guild.get_role(rid)
         if r:
             try: await member.add_roles(r)
-            except: pass
+            except Exception: pass
     if gid in bot.arrivee:
         ch = member.guild.get_channel(bot.arrivee[gid])
         if ch:
             count = member.guild.member_count or 0
             try: await ch.send(view=WelcomeLayout(member, count))
-            except: pass
+            except Exception: pass
 
 @bot.event
 async def on_member_remove(member: discord.Member):
@@ -1439,7 +1441,7 @@ async def on_member_remove(member: discord.Member):
             e.set_thumbnail(url=member.display_avatar.url)
             e.set_footer(text=f"{member.guild.member_count} membres restants  ◈  AEGIS AI")
             try: await ch.send(embed=e)
-            except: pass
+            except Exception: pass
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -1450,10 +1452,10 @@ async def on_voice_state_update(member, before, after):
                 nc = await member.guild.create_voice_channel(
                     f"◈ {member.display_name}", category=after.channel.category)
                 await member.move_to(nc)
-            except: pass
+            except Exception: pass
     if (before.channel and before.channel.name.startswith("◈ ") and len(before.channel.members) == 0):
         try: await before.channel.delete()
-        except: pass
+        except Exception: pass
 
 @bot.event
 async def on_member_ban(guild, user):
@@ -1466,7 +1468,7 @@ async def on_guild_channel_delete(channel):
         await asyncio.sleep(0.5)
         async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
             await nuke_check(channel.guild, entry.user.id, "ch_del"); break
-    except: pass
+    except Exception: pass
 
 @bot.event
 async def on_guild_role_delete(role):
@@ -1474,18 +1476,18 @@ async def on_guild_role_delete(role):
         await asyncio.sleep(0.5)
         async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
             await nuke_check(role.guild, entry.user.id, "role_del"); break
-    except: pass
+    except Exception: pass
 
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot: return
-    if message.guild:
-        if await check_spam(message): return
-        await add_xp(message)
+    if not message.guild: return  # Ignorer les DMs
+    if await check_spam(message): return
+    await add_xp(message)
     bot_mentioned  = bot.user in (message.mentions or [])
     name_mentioned = "aegis" in message.content.lower() and not bot_mentioned
-    ch_active = bot.ai_active.get(str(message.channel.id), False) if message.guild else False
-    if message.guild and (bot_mentioned or name_mentioned or ch_active):
+    ch_active = bot.ai_active.get(str(message.channel.id), False)
+    if bot_mentioned or name_mentioned or ch_active:
         uid = message.author.id; now = datetime.now(timezone.utc)
         # Cooldown global par guild (anti-spam IA)
         gid_str = str(message.guild.id)
@@ -1512,7 +1514,7 @@ async def on_message(message: discord.Message):
             )
         except Exception:
             try: await message.reply(f"◉ {rep}")
-            except: pass
+            except Exception: pass
         return
     await bot.process_commands(message)
 
@@ -1693,7 +1695,7 @@ async def mod_unban(i: discord.Interaction, user_id: str):
         user = await bot.fetch_user(int(user_id))
         await i.guild.unban(user)
         await i.response.send_message(embed=ok("Débanni", f"{user}"))
-    except:
+    except Exception:
         await i.response.send_message(embed=er("Introuvable"), ephemeral=True)
 
 @mod_group.command(name="kick", description="Expulser un membre")
@@ -1764,20 +1766,20 @@ async def mod_warn(i: discord.Interaction, membre: discord.Member, raison: str="
     sanction = None
     if count == 3:
         try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=1),reason="3 warns"); sanction="🔇 Mute 1h"
-        except: pass
+        except Exception: pass
     elif count == 5:
         try: await membre.timeout(datetime.now(timezone.utc)+timedelta(hours=24),reason="5 warns"); sanction="🔇 Mute 24h"
-        except: pass
+        except Exception: pass
     elif count >= 7:
         try: await membre.kick(reason="7 warns"); sanction="⚡ Kick"
-        except: pass
+        except Exception: pass
     extra = f"**Total warns** `{count}`" + (f"\n**Sanction auto** {sanction}" if sanction else "")
     add_history(str(i.guild.id), str(membre.id), "warn", i.user.id, raison)
     await i.response.send_message(view=ModActionLayout("⚠️", "Avertissement", membre, raison, extra=extra, color=C.NEON_ORANGE))
     await log(i.guild, "Warn", f"**Membre :** {membre}\n**Raison :** {raison}\n**Par :** {i.user}", C.NEON_ORANGE)
     try: await membre.send(embed=emb(f"⚠️  Avertissement reçu",
         f"**Serveur :** {i.guild.name}\n**Raison :** {raison}\n**Total :** {count}", C.NEON_ORANGE))
-    except: pass
+    except Exception: pass
 
 @mod_group.command(name="unwarn", description="Retirer un avertissement")
 @app_commands.describe(membre="Le membre")
@@ -1932,13 +1934,13 @@ async def music_play(i: discord.Interaction, recherche: str):
     if not vc.is_playing() and not vc.is_paused():
         await next_track(gid)
         try: await search_msg.delete()
-        except: pass
+        except Exception: pass
         await i.followup.send(view=MusicLayout(track, "▶ Lecture"))
     else:
         pos = len(bot.queues.get(gid, []))
         track["_pos"] = pos
         try: await search_msg.delete()
-        except: pass
+        except Exception: pass
         await i.followup.send(view=MusicLayout(track, f"📋 Ajouté #{pos}"))
 
 @music_group.command(name="pause", description="Mettre en pause")
@@ -2063,14 +2065,14 @@ async def fun_embed(i: discord.Interaction, titre: str, contenu: str,
     if not perms.view_channel or not perms.send_messages or not perms.embed_links:
         return await i.response.send_message(embed=er("Accès refusé"), ephemeral=True)
     try: color = int(couleur.replace("#",""), 16)
-    except: color = C.NEON_CYAN
+    except Exception: color = C.NEON_CYAN
     await i.response.defer(ephemeral=True)
     e = discord.Embed(title=titre, description=contenu, color=color, timestamp=datetime.now(timezone.utc))
     e.set_footer(text=f"Par {i.user.display_name}  ◈  AEGIS AI")
     if image:
         if not any(image.lower().endswith(ext) for ext in ['.mp4','.mov','.webm','.avi']):
             try: e.set_image(url=image)
-            except: pass
+            except Exception: pass
     if miniature: e.set_thumbnail(url=miniature)
     await target.send(embed=e)
     await i.followup.send(embed=ok("Envoyé !", f"Dans {target.mention}"), ephemeral=True)
@@ -2212,7 +2214,7 @@ async def stats_userinfo(i: discord.Interaction, membre: Optional[discord.Member
 @stats_group.command(name="serverinfo", description="Informations sur le serveur")
 async def stats_serverinfo(i: discord.Interaction):
     g = i.guild
-    total = g.member_count or len(g.members) or 0
+    total = g.member_count or 0
     bots  = sum(1 for m in g.members if m.bot)
     humans = max(0, total - bots)
     await i.response.send_message(view=ServerInfoLayout(g, humans, bots))
@@ -2245,22 +2247,22 @@ async def server_setup(i: discord.Interaction, style: str="communaute"):
     for name, color in cfg["roles"]:
         if not discord.utils.get(g.roles, name=name):
             try: await g.create_role(name=name,color=discord.Color(color)); created["roles"]+=1; await asyncio.sleep(0.4)
-            except: pass
+            except Exception: pass
     for cat_name, (texts, voices) in cfg["struct"].items():
         cat = discord.utils.get(g.categories, name=cat_name)
         if not cat:
             try:
                 ow = {g.default_role:discord.PermissionOverwrite(view_channel=False)} if "STAFF" in cat_name or "MJ" in cat_name else {}
                 cat = await g.create_category(cat_name, overwrites=ow); await asyncio.sleep(0.4)
-            except: continue
+            except Exception: continue
         for cn in texts:
             if not discord.utils.get(g.text_channels, name=cn):
                 try: await g.create_text_channel(cn,category=cat); created["text"]+=1; await asyncio.sleep(0.4)
-                except: pass
+                except Exception: pass
         for vn in voices:
             if not discord.utils.get(g.voice_channels, name=vn):
                 try: await g.create_voice_channel(vn,category=cat); created["voice"]+=1; await asyncio.sleep(0.4)
-                except: pass
+                except Exception: pass
     for ln in ["📊・logs","logs"]:
         lc = discord.utils.get(g.text_channels, name=ln)
         if lc: bot.logs_ch[str(g.id)] = lc.id; break
@@ -2287,7 +2289,7 @@ async def server_arrivee(i: discord.Interaction, salon_id: str):
         if not ch: raise ValueError()
         bot.arrivee[str(i.guild.id)] = ch.id
         await i.response.send_message(embed=ok("Arrivées configurées", f"Salon : {ch.mention}"))
-    except:
+    except Exception:
         await i.response.send_message(embed=er("ID invalide",
             "Active le **Mode développeur** puis clic droit sur le salon → Copier l'identifiant."), ephemeral=True)
 
@@ -2306,7 +2308,7 @@ async def server_depart(i: discord.Interaction, salon_id: str):
         if not ch: raise ValueError()
         bot.depart_ch[str(i.guild.id)] = ch.id
         await i.response.send_message(embed=ok("Départs configurés", f"Salon : {ch.mention}"))
-    except:
+    except Exception:
         await i.response.send_message(embed=er("ID invalide"), ephemeral=True)
 
 @server_group.command(name="panel", description="Créer un panel de tickets")
@@ -2328,7 +2330,7 @@ async def server_panel(i: discord.Interaction, titre: str="Support",
     if image:
         if not any(image.lower().endswith(ext) for ext in ['.mp4','.mov','.webm','.avi']):
             try: e.set_image(url=image)
-            except: pass
+            except Exception: pass
     await i.channel.send(embed=e, view=TicketView())
     await i.followup.send(embed=ok("Panel créé !"), ephemeral=True)
 
@@ -2377,7 +2379,7 @@ async def server_verification(i: discord.Interaction, role: Optional[discord.Rol
         role = discord.utils.get(i.guild.roles, name="✅ Vérifié")
         if not role:
             try: role = await i.guild.create_role(name="✅ Vérifié", color=discord.Color(C.NEON_GREEN))
-            except:
+            except Exception:
                 return await i.response.send_message(embed=er("Erreur"), ephemeral=True)
     bot.verif_roles[gid] = role.id
     if not check_perms(i.channel, i.guild.me):
@@ -2477,17 +2479,17 @@ async def server_restore(i: discord.Interaction, nom: Optional[str]=None):
     for x in data.get("roles",[]):
         if not discord.utils.get(i.guild.roles, name=x["name"]):
             try: await i.guild.create_role(name=x["name"],color=discord.Color(x.get("color",0))); r["roles"]+=1; await asyncio.sleep(0.3)
-            except: pass
+            except Exception: pass
     for x in data.get("cats",[]):
         if not discord.utils.get(i.guild.categories, name=x["name"]):
             try: await i.guild.create_category(x["name"]); await asyncio.sleep(0.3)
-            except: pass
+            except Exception: pass
     for x in data.get("text",[]):
         if not discord.utils.get(i.guild.text_channels, name=x["name"]):
             try:
                 cat = discord.utils.get(i.guild.categories, name=x.get("cat"))
                 await i.guild.create_text_channel(x["name"],category=cat); r["channels"]+=1; await asyncio.sleep(0.3)
-            except: pass
+            except Exception: pass
     await i.followup.send(embed=ok("Restauré !", f"Rôles : **{r['roles']}** | Salons : **{r['channels']}**"))
 
 @server_group.command(name="autorole", description="Rôle automatique pour les nouveaux membres")
@@ -2614,12 +2616,12 @@ async def server_antinuke(i: discord.Interaction, activer: bool=True, seuil: int
         try:
             uid = int(whitelist_add)
             if uid not in wl: wl.append(uid)
-        except: pass
+        except Exception: pass
     if whitelist_rem:
         try:
             uid = int(whitelist_rem)
             if uid in wl: wl.remove(uid)
-        except: pass
+        except Exception: pass
     wl_txt = ", ".join([f"<@{uid}>" for uid in wl]) or "Aucun"
     await i.response.send_message(embed=emb("☢️  Anti-Nuke",
         f"**Statut :** {'✅ Activé' if activer else '❌ Désactivé'}\n**Seuil :** {seuil}/10s\n"
@@ -2746,10 +2748,16 @@ async def server_roleall(i: discord.Interaction, role: discord.Role):
             embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
     await i.response.defer()
     count = 0
-    for m in i.guild.members:
-        if not m.bot and role not in m.roles:
-            try: await m.add_roles(role); count += 1; await asyncio.sleep(0.5)
-            except: pass
+    members = []
+    try:
+        async for m in i.guild.fetch_members(limit=None):
+            if not m.bot: members.append(m)
+    except Exception:
+        members = [m for m in i.guild.members if not m.bot]
+    for m in members:
+        if role not in m.roles:
+            try: await m.add_roles(role); count += 1; await asyncio.sleep(0.3)
+            except Exception: pass
     await i.followup.send(embed=ok("Rôle donné à tous", f"{role.mention} — **{count}** membres"))
 
 bot.tree.add_command(server_group)
@@ -2776,7 +2784,7 @@ async def events_giveaway(i: discord.Interaction, titre: str, prix: str, duree: 
         elif duree_lower.endswith('s'): total_s = int(duree_lower[:-1])
         else:                           total_s = int(duree_lower) * 60
         if total_s < 10: total_s = 10
-    except:
+    except Exception:
         return await i.response.send_message(embed=er("Durée invalide","Exemples : `10m` `2h` `1j`"), ephemeral=True)
     await i.response.defer()
     end = datetime.now(timezone.utc) + timedelta(seconds=total_s)
@@ -3114,10 +3122,7 @@ async def owner_dmall_ultime(i: discord.Interaction, message: str):
     if stopped_reason:
         final = warn("DM Ultime arrêté",
                      f"{stopped_reason}\n\n✅ Envoyés : **{sent}**\n❌ Échoués : **{failed}**\n📊 Total traités : **{idx}/{len(targets)}**")
-    try:
-        await i.edit_original_response(embed=final, view=None)
-    except Exception:
-        await i.followup.send(embed=final, ephemeral=True)
+    await i.followup.send(embed=final, ephemeral=True)
 
 # ══════════════════════════════════════════════
 #  NOUVEAUTÉS — /server antinuke pause, /mod tempban, /mod historique,
@@ -3188,7 +3193,7 @@ async def mod_tempban(i: discord.Interaction, membre: discord.Member, duree: str
         elif d.endswith('m'): secs = int(d[:-1]) * 60
         else: secs = int(d) * 60
         if secs < 60: secs = 60
-    except:
+    except Exception:
         return await i.response.send_message(embed=er("Durée invalide", "Ex: `10m` `2h` `7j`"), ephemeral=True)
     end = datetime.now(timezone.utc) + timedelta(seconds=secs)
     try:
@@ -3291,7 +3296,7 @@ async def events_bingo(i: discord.Interaction, intervalle: int = 15):
         try:
             await i.channel.send(embed=emb(f"🎱  Bingo — Tirage #{len(drawn)}",
                 f"### **{n}**\n\nNombres déjà sortis : `{', '.join(map(str, drawn[-15:]))}`", C.NEON_PINK))
-        except: pass
+        except Exception: pass
         await asyncio.sleep(intervalle)
     bot.bingo_active.pop(cid, None)
 
@@ -3396,7 +3401,7 @@ async def on_member_ban(guild, user):
             if entry.target.id == user.id:
                 add_history(str(guild.id), str(user.id), "ban", entry.user.id, entry.reason or "Aucune")
                 await nuke_check(guild, entry.user.id, "ban"); break
-    except: pass
+    except Exception: pass
 
 
 # ══════════════════════════════════════════════

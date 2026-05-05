@@ -2105,10 +2105,23 @@ async def fun_embed(i: discord.Interaction, titre: str, contenu: str,
 @app_commands.describe(message="Le message à envoyer")
 @app_commands.default_permissions(administrator=True)
 async def fun_dmall(i: discord.Interaction, message: str):
-    # Vérification permission réelle
-    if not i.user.guild_permissions.administrator:
+    # Vérification STRICTE — propriétaire du serveur OU propriétaire du bot uniquement
+    is_guild_owner = (i.user.id == i.guild.owner_id)
+    is_bot_owner   = (BOT_OWNER_ID != 0 and i.user.id == BOT_OWNER_ID)
+    has_admin_perm = i.user.guild_permissions.administrator
+
+    if not (is_guild_owner or is_bot_owner or has_admin_perm):
         return await i.response.send_message(
-            embed=er("Permission refusée", "Tu n'as pas la permission `Administrateur`."), ephemeral=True)
+            embed=er("Permission refusée", "Réservé au propriétaire du serveur ou aux administrateurs."), ephemeral=True)
+
+    # Sécurité supplémentaire : vérifier que le rôle admin n'est pas donné à tout le monde
+    # Si plus de 50% des membres ont admin → refuser (serveur mal configuré)
+    admin_count = sum(1 for m in i.guild.members if m.guild_permissions.administrator and not m.bot)
+    total_humans = sum(1 for m in i.guild.members if not m.bot)
+    if total_humans > 5 and admin_count > (total_humans * 0.5):
+        msg_err = "Plus de 50% des membres ont la permission Admin. Corrige les permissions."
+        return await i.response.send_message(
+            embed=er("Serveur mal configure", msg_err), ephemeral=True)
     await i.response.defer(ephemeral=True)
 
     # Récupérer TOUS les membres via fetch_members
